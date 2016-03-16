@@ -28,6 +28,8 @@ export default class IndexMap {
 	constructor() {
 		this._fromIndexes = [];
 		this._toIndexes = [];
+		this._lastQuery = 0;
+		this._lastIndex = 0;
 
 		this.addMapping(0, 0);
 	}
@@ -42,14 +44,19 @@ export default class IndexMap {
 	}
 
 	getMapping(from) {
+		let initial = 0;
+		if (from > this._lastQuery) {
+			initial = this._lastIndex;
+		}
 		let fromIndex = this._toIndexes.length - 1;
-		for (let i = 0; i <= fromIndex; i++) {
+		for (let i = initial; i <= fromIndex; i++) {
 			let start = this._fromIndexes[i];
 			if (start > from) {
 				fromIndex = i - 1;
 				break;
 			}
 		}
+		this._lastIndex = fromIndex;
 		return this._toIndexes[fromIndex] + from - this._fromIndexes[fromIndex];
 	}
 }
