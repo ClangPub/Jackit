@@ -24,33 +24,51 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+import IndexMap from '../source/IndexMap.js';
+import TransformedSource from '../source/TransformedSource.js';
 import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
 
-export default class Context {
+export default class LogicLineParser {
 
-	constructor() {
-		this._diagnostics = [];
-	}
+	static process(context, source) {
+		let content = source.content();
 
-	emitDiagnostics(...msgs) {
-		this._diagnostics.push(...msgs);
-		let fatal = msgs.filter(msg => msg.level() === DiagnosticMessage.LEVEL_FATAL);
-		if (fatal.length !== 0) {
-			throw fatal[0];
+		if (content === '') {
+			return source;
 		}
-	}
 
-	generateDiagnostics() {
+		let startIndex = 0;
 		let builder = '';
-		for (let d of this._diagnostics) {
-			builder += d.generateSummaryLine() + '\n';
-			builder += d.generateLookupText() + '\n';
-		}
-		return builder;
-	}
+		let mapping = null;
 
-	diagnostics() {
-		return this._diagnostics;
+		if (content[content.length - 1] !== '\n') {
+			context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'Source file shall end in a new line', source.range(content.length - 1, content.length)));
+		} else if (content.length >= 2 && content[content.length - 2] === '\\') {
+			context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'Source file shall end in a new line, which shall not be immediately preceded by a backslash character', source.range(content.length - 2, content.length)));
+		}
+
+		for (let i = 0; i < content.length - 1; i++) {
+			if (content[i] === '\\' && content[i + 1] === '\n') {
+				if (!builder) {
+					mapping = new IndexMap();
+				}
+				builder += content.substring(startIndex, i);
+				i++;
+				startIndex = i + 1;
+				mapping.addMapping(builder.length, startIndex);
+			}
+		}
+
+		if (!builder) {
+			return source;
+		} else {
+			builder += content.substring(startIndex);
+			return new TransformedSource(source, builder, mapping);
+		}
+
+		return source;
 	}
 
 }

@@ -24,26 +24,25 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import Context from '../src/context/Context.js';
 import Source from '../src/source/Source.js';
-import DiagnosticMessage from '../src/diagnostics/DiagnosticMessage.js';
+import Context from '../src/context/Context.js';
+import TrigraphParser from '../src/parser/TrigraphParser.js';
 import {
 	assert,
 	fail
 }
 from './Test.js';
 
-let src = new Source('testcase', 'The following phrases are not allowed\n\tQAQ\n\nQAQ\n');
 let ctx = new Context();
+let src = new Source('testcase', 'ABC');
+let tsrc = TrigraphParser.process(ctx, src);
 
-let msg = new DiagnosticMessage(DiagnosticMessage.LEVEL_FATAL, 'Invalid phrases in document, ...', src.range(44, -1, 47));
-let msg2 = new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '... because it is not allowed', src.range(0, -1, 43));
-try {
-	ctx.emitDiagnostics(msg, msg2);
-} catch (e) {
-	if (e instanceof DiagnosticMessage) {
-		ctx.generateDiagnostics();
-	} else {
-		throw e;
-	}
-}
+assert(src, tsrc, 'tsrc === src');
+assert(0, ctx.diagnostics().length, 'ctx.diagnostics().length === 0');
+
+src = new Source('testcase', '??<??>');
+tsrc = TrigraphParser.process(ctx, src);
+
+assert('{}', tsrc.content(), "tsrc.content() === '{}'");
+assert(6, tsrc.range(0, 2).end(), 'tsrc.range(0, 2).end() === 6');
+assert(2, ctx.diagnostics().length, 'ctx.diagnostics().length === 2');

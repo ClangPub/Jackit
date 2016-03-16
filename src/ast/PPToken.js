@@ -24,26 +24,23 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import Context from '../src/context/Context.js';
-import Source from '../src/source/Source.js';
-import DiagnosticMessage from '../src/diagnostics/DiagnosticMessage.js';
-import {
-	assert,
-	fail
-}
-from './Test.js';
+export default class PPToken {
 
-let src = new Source('testcase', 'The following phrases are not allowed\n\tQAQ\n\nQAQ\n');
-let ctx = new Context();
+	constructor(range, type, value) {
+		this._range = range;
+		this._type = type;
+		this._value = value;
+	}
 
-let msg = new DiagnosticMessage(DiagnosticMessage.LEVEL_FATAL, 'Invalid phrases in document, ...', src.range(44, -1, 47));
-let msg2 = new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '... because it is not allowed', src.range(0, -1, 43));
-try {
-	ctx.emitDiagnostics(msg, msg2);
-} catch (e) {
-	if (e instanceof DiagnosticMessage) {
-		ctx.generateDiagnostics();
-	} else {
-		throw e;
+	type() {
+		return this._type;
+	}
+
+	range() {
+		return this._range;
+	}
+
+	value() {
+		return this._value;
 	}
 }

@@ -24,26 +24,24 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import Context from '../src/context/Context.js';
-import Source from '../src/source/Source.js';
-import DiagnosticMessage from '../src/diagnostics/DiagnosticMessage.js';
-import {
-	assert,
-	fail
-}
-from './Test.js';
+import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
 
-let src = new Source('testcase', 'The following phrases are not allowed\n\tQAQ\n\nQAQ\n');
-let ctx = new Context();
+export default class TrailingSpacePass {
 
-let msg = new DiagnosticMessage(DiagnosticMessage.LEVEL_FATAL, 'Invalid phrases in document, ...', src.range(44, -1, 47));
-let msg2 = new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '... because it is not allowed', src.range(0, -1, 43));
-try {
-	ctx.emitDiagnostics(msg, msg2);
-} catch (e) {
-	if (e instanceof DiagnosticMessage) {
-		ctx.generateDiagnostics();
-	} else {
-		throw e;
+	static process(context, source) {
+		let content = source.content();
+
+		const matcher = /[\v\f\t ]+\n/g;
+
+		let match;
+		while ((match = matcher.exec(content)) != null) {
+			let len = match[0].length - 1;
+			context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_WARNING, 
+					len === 1 ? 'Trailing space is discouraged' : 'Trailing spaces are discouraged',
+					source.range(match.index, match.index + len)));
+		}
+
+		return source;
 	}
 }

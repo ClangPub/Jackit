@@ -24,26 +24,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import Context from '../src/context/Context.js';
 import Source from '../src/source/Source.js';
-import DiagnosticMessage from '../src/diagnostics/DiagnosticMessage.js';
+import Context from '../src/context/Context.js';
+import TrailingSpacePass from '../src/pass/TrailingSpacePass.js';
 import {
 	assert,
 	fail
 }
 from './Test.js';
 
-let src = new Source('testcase', 'The following phrases are not allowed\n\tQAQ\n\nQAQ\n');
 let ctx = new Context();
+let src = new Source('testcase', 'a\n');
+let tsrc = TrailingSpacePass.process(ctx, src);
 
-let msg = new DiagnosticMessage(DiagnosticMessage.LEVEL_FATAL, 'Invalid phrases in document, ...', src.range(44, -1, 47));
-let msg2 = new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '... because it is not allowed', src.range(0, -1, 43));
-try {
-	ctx.emitDiagnostics(msg, msg2);
-} catch (e) {
-	if (e instanceof DiagnosticMessage) {
-		ctx.generateDiagnostics();
-	} else {
-		throw e;
-	}
-}
+assert(src, tsrc, 'tsrc === src');
+assert(0, ctx.diagnostics().length, 'ctx.diagnostics().length === 0');
+
+src = new Source('testcase', 'a \n');
+tsrc = TrailingSpacePass.process(ctx, src);
+
+assert(src, tsrc, 'tsrc === src');
+assert(1, ctx.diagnostics().length, 'ctx.diagnostics().length === 1');
+
+src = new Source('testcase', 'one trailing space \ntwo trailing spaces  \n');
+tsrc = TrailingSpacePass.process(ctx, src);
+
+assert(src, tsrc, 'tsrc === src');
+assert(3, ctx.diagnostics().length, 'ctx.diagnostics().length === 3');

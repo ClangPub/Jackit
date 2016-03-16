@@ -37,7 +37,8 @@ export default class TransformedSource extends Source {
 
 	range(start, caret, end) {
 		if (caret === undefined) {
-			end = caret = start;
+			caret = start;
+			end = start + 1;
 		} else if (end === undefined) {
 			end = caret;
 			caret = start;

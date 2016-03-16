@@ -24,6 +24,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+import "babel-polyfill";
 import Color from '../diagnostics/Color.js';
 
 let colorMap;
@@ -89,7 +90,6 @@ export default class DiagnosticMessage extends Error {
 	constructor(level, message, range) {
 		super(message);
 
-
 		this._range = range;
 		this._level = level;
 	}
@@ -114,7 +114,7 @@ export default class DiagnosticMessage extends Error {
 		let [caretLine, caretOffset] = getLineAndOffset(linemap, caretOrStart);
 
 		let src = filename + ':' + (caretLine + 1) + ':' + (caretOffset + 1);
-		let msgLine = `${Color.wrap(src + ': ', Color.WHITE)}${Color.wrap(this._level + ': ', color)}${this.message}`;
+		let msgLine = `${Color.wrap(src + ': ', Color.WHITE)}${Color.wrap(this._level + ': ', color)}${Color.wrap(this.message, Color.WHITE)}`;
 		return msgLine;
 	}
 
@@ -124,16 +124,16 @@ export default class DiagnosticMessage extends Error {
 		let color = colorMap[this._level];
 
 		let [startLine, startOffset] = getLineAndOffset(linemap, this._range.start());
-		let [endLine, endOffset] = getLineAndOffset(linemap, this._range.end());
-		let caretOrStart = this._range.caret() === -1 ? this._range.start() : this._range.caret();
-		let [caretLine, caretOffset] = getLineAndOffset(linemap, caretOrStart);
+		let [endLine, endOffset] = getLineAndOffset(linemap, this._range.end() - 1);
+		endOffset++; // Edge case when end of line shall also be marked
+		let [caretLine, caretOffset] = this._range.caret() === -1 ? [-1,-1] : getLineAndOffset(linemap, this._range.caret());
 
 		if (startLine === endLine) {
-			let lineText = translateLine(linemap.getLine(caretLine));
+			let lineText = translateLine(linemap.getLine(startLine));
 			text += colorLine(lineText, startOffset, endOffset, color) + '\n';
-			text += generateIndicator(caretLine, startOffset, endOffset, caretLine, caretOffset, color);
+			text += generateIndicator(startLine, startOffset, endOffset, caretLine, caretOffset, color);
 		} else {
-			let lineNumberWidth = Math.max(strWidth(startLine + 1, endLine + 1));
+			let lineNumberWidth = Math.max(strWidth(startLine + 1), strWidth(endLine + 1));
 
 			// First line
 			let lineText = translateLine(linemap.getLine(startLine));

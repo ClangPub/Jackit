@@ -2,7 +2,10 @@
 	"plugins": [
         ["babel-plugin-transform-builtin-extend", {
             "globals": ["Error"]
-        }]
-    ],
-	"presets": ["es2015"]
+        }],
+        ["transform-es2015-modules-commonjs"],
+        ["transform-es2015-spread"],
+        ["transform-es2015-parameters"],
+        ["transform-es2015-destructuring"]
+    ]
 }

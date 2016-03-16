@@ -24,26 +24,53 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-import Context from '../src/context/Context.js';
-import Source from '../src/source/Source.js';
-import DiagnosticMessage from '../src/diagnostics/DiagnosticMessage.js';
-import {
-	assert,
-	fail
-}
-from './Test.js';
+import IndexMap from '../source/IndexMap.js';
+import TransformedSource from '../source/TransformedSource.js';
+import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
 
-let src = new Source('testcase', 'The following phrases are not allowed\n\tQAQ\n\nQAQ\n');
-let ctx = new Context();
+const trigraphMap = {
+	'=': '#',
+	'(': '[',
+	'/': '\\',
+	')': ']',
+	'\'': '^',
+	'<': '{',
+	'!': '|',
+	'>': '}',
+	'-': '~'
+};
 
-let msg = new DiagnosticMessage(DiagnosticMessage.LEVEL_FATAL, 'Invalid phrases in document, ...', src.range(44, -1, 47));
-let msg2 = new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '... because it is not allowed', src.range(0, -1, 43));
-try {
-	ctx.emitDiagnostics(msg, msg2);
-} catch (e) {
-	if (e instanceof DiagnosticMessage) {
-		ctx.generateDiagnostics();
-	} else {
-		throw e;
+export default class TrigraphParser {
+
+	static process(context, source) {
+		let content = source.content();
+		let startIndex = 0;
+		let builder = '';
+		let mapping = null;
+
+		for (let i = 0; i < content.length - 2; i++) {
+			if (content[i] === '?' && content[i + 1] === '?') {
+				if (content[i + 2] in trigraphMap) {
+					context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_WARNING, 'Use of trigraph is discouraged', source.range(i, i + 2, i + 3)));
+					
+					if (!builder) {
+						mapping = new IndexMap();
+					}
+					builder += content.substring(startIndex, i);
+					builder += trigraphMap[content[i + 2]];
+					i += 2;
+					startIndex = i + 1;
+					mapping.addMapping(builder.length, startIndex);
+				}
+			}
+		}
+
+		if (!builder) {
+			return source;
+		} else {
+			builder += content.substring(startIndex);
+			return new TransformedSource(source, builder, mapping);
+		}
 	}
+
 }

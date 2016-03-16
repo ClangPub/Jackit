@@ -48,6 +48,7 @@ export function fail(reason, description = '') {
 }
 
 for (currentTest of fs.readdirSync(__dirname)) {
+	failed = false;
 	if (currentTest === filename) {
 		continue;
 	}

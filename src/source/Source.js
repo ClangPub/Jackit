@@ -47,7 +47,8 @@ export default class Source {
 
 	range(start, caret, end) {
 		if (caret === undefined) {
-			end = caret = start;
+			caret = start;
+			end = start + 1;
 		} else if (end === undefined) {
 			end = caret;
 			caret = start;
@@ -64,6 +65,10 @@ export default class Source {
 
 	substring(...args) {
 		return this._content.substring(...args);
+	}
+
+	content() {
+		return this._content;
 	}
 
 }
