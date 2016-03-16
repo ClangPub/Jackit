@@ -52,7 +52,7 @@ assert(10, range.end(), 'range.end() === 10');
 range = tsrc.range(4);
 assert(6, range.caret(), 'range.caret() === 6');
 assert(6, range.start(), 'range.start() === 6');
-assert(6, range.end(), 'range.end() === 6');
+assert(7, range.end(), 'range.end() === 7');
 
 range = tsrc.range(1, 4, 6);
 assert(2, range.start(), 'range.start() === 2');
