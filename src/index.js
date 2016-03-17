@@ -15,7 +15,8 @@ src = LogicLineParser.process(ctx, src);
 
 let tokens = PPTokenizer.tokenize(ctx, src);
 
-// for (let t of tokens) {
-// 	console.log('<' + t.type() + ',' + t.value() + '>');
-// }
+for (let t of tokens) {
+	console.log('<' + t.type() + ',' + t.value() + '>');
+}
+
 console.log(ctx.generateDiagnostics());
