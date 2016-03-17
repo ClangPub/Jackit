@@ -90,7 +90,7 @@ export default class DiagnosticMessage extends Error {
 	constructor(level, message, range) {
 		super(message);
 
-		this._range = range;
+		this._range = range.resolve();
 		this._level = level;
 	}
 

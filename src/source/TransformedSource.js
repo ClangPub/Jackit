@@ -35,15 +35,4 @@ export default class TransformedSource extends Source {
 		this._indexMap = indexMap;
 	}
 
-	range(start, caret, end) {
-		if (caret === undefined) {
-			caret = start;
-			end = start + 1;
-		} else if (end === undefined) {
-			end = caret;
-			caret = start;
-		}
-		return this._source.range(this._indexMap.getMapping(start), this._indexMap.getMapping(caret), this._indexMap.getMapping(end));
-	}
-
 }
