@@ -60,7 +60,7 @@ export class PPDirOrTextLine {
 				}
 			}
 
-			if (firstNonWhiteSpace === undefined || firstNonWhiteSpace.value() === '#') {
+			if (firstNonWhiteSpace === undefined || firstNonWhiteSpace.value() !== '#') {
 				// text line
 				this._istextline = true;
 				this._dirname = null;
@@ -99,7 +99,41 @@ export default class PPDirExecutor {
 		this._source = source;
 	}
 
+	next() {
+		if (this._pptokens.length === 0 || this._pptokens[0].type() === 'eof')
+			return null;
+
+		const getLineNumber = (tok) => this._source.linemap().getLineNumber(tok.range().start());
+
+		let pptokens = [];
+		let line, i;
+		const len = this._pptokens.length;
+
+		for (i = 0; i < len; ++i) {
+			let pptok = this._pptokens[i];
+
+			if (line === undefined) {
+				line = getLineNumber(pptok);
+				pptokens.push(pptok);
+			} else if (line === getLineNumber(pptok)) {
+				pptokens.push(pptok);
+			} else {
+				break;
+			}
+		}
+
+		this._pptokens.splice(0, i);
+		return new PPDirOrTextLine(this._context, pptokens, this._source);
+	}
+
 	static process(context, pptokens, source) {
 		const direxec = new PPDirExecutor(context, pptokens, source);
+		let line;
+
+		while ((line = direxec.next()) !== null) {
+			console.log('~~~~');
+			console.log(line.isTextLine());
+			console.log(line.dirName());
+		}
 	}
 }
