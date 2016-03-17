@@ -41,7 +41,7 @@ imap.addMapping(3, 5);
 imap.addMapping(6, 10);
 
 let tsrc = new TransformedSource(src, 'ABBCCCD', imap);
-let range = tsrc.range(1, 6);
+let range = tsrc.range(1, 6).resolve();
 
 assert('testcase', tsrc.filename(), "tsrc.filename() === 'testcase'");
 assert(src, range.source(), 'range.source() === src');
@@ -49,12 +49,12 @@ assert(2, range.caret(), 'range.caret() === 2');
 assert(2, range.start(), 'range.start() === 2');
 assert(10, range.end(), 'range.end() === 10');
 
-range = tsrc.range(4);
+range = tsrc.range(4).resolve();
 assert(6, range.caret(), 'range.caret() === 6');
 assert(6, range.start(), 'range.start() === 6');
 assert(7, range.end(), 'range.end() === 7');
 
-range = tsrc.range(1, 4, 6);
+range = tsrc.range(1, 4, 6).resolve();
 assert(2, range.start(), 'range.start() === 2');
 assert(6, range.caret(), 'range.caret() === 6');
 assert(10, range.end(), 'range.end() === 10');

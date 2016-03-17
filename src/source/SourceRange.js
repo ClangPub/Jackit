@@ -47,4 +47,14 @@ export default class SourceRange {
 	end() {
 		return this._end;
 	}
+
+	resolve() {
+		let src = this._source;
+		// Check if source is transformed. We cannot use instanceof here, otherwise we will have circular dependency
+		if (src._source) {
+			let range = src._source.range(src._indexMap.getMapping(this._start), src._indexMap.getMapping(this._caret), src._indexMap.getMapping(this._end));
+			return range.resolve();
+		}
+		return this;
+	}
 }

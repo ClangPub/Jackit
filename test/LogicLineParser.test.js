@@ -57,5 +57,5 @@ src = new Source('testcase', 'a\\\nb\n');
 tsrc = LogicLineParser.process(ctx, src);
 
 assert('ab\n', tsrc.content(), "tsrc.content() === 'ab\\n'");
-assert(3, tsrc.range(0, 1).end(), 'tsrc.range(0, 1).end() === 3');
+assert(3, tsrc.range(0, 1).resolve().end(), 'tsrc.range(0, 1).resolve().end() === 3');
 assert(2, ctx.diagnostics().length, 'ctx.diagnostics().length === 2');

@@ -44,5 +44,5 @@ src = new Source('testcase', '??<??>');
 tsrc = TrigraphParser.process(ctx, src);
 
 assert('{}', tsrc.content(), "tsrc.content() === '{}'");
-assert(6, tsrc.range(0, 2).end(), 'tsrc.range(0, 2).end() === 6');
+assert(6, tsrc.range(0, 2).resolve().end(), 'tsrc.range(0, 2).resolve().end() === 6');
 assert(2, ctx.diagnostics().length, 'ctx.diagnostics().length === 2');
