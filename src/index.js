@@ -4,6 +4,7 @@ import TrigraphParser from './parser/TrigraphParser.js';
 import LogicLineParser from './parser/LogicLineParser.js';
 import TrailingSpacePass from './pass/TrailingSpacePass.js';
 import PPTokenizer from './parser/PPTokenizer.js';
+import Tokenizer from './parser/Tokenizer.js';
 
 import fs from 'fs';
 
@@ -15,7 +16,10 @@ src = LogicLineParser.process(ctx, src);
 
 let tokens = PPTokenizer.tokenize(ctx, src);
 
-// for (let t of tokens) {
-// 	console.log('<' + t.type() + ',' + t.value() + '>');
-// }
+for (let t of tokens) {
+	t = Tokenizer.convert(ctx, t);
+	if (!t) continue;
+	let v = t.value();
+	console.log('<' + t.type() + (v ? ',' + t.value() : '') + '>');
+}
 console.log(ctx.generateDiagnostics());
