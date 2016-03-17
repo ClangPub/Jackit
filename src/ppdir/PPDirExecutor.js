@@ -24,73 +24,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-export class PPDirOrTextLine {
-	constructor(context, pptokens, source) {
-		this._context = context;
-		this._pptokens = pptokens;
-		this._source = source;
-	}
-
-	context() {
-		return this._context;
-	}
-
-	pptokens() {
-		return this._pptokens;
-	}
-
-	source() {
-		return this._source;
-	}
-
-	_parseLine() {
-		let firstNonWhiteSpace;
-		let secondNonWhiteSpace;
-
-		for (let i = 0, length = this._pptokens.length; i < length; ++i) {
-			let pptoken = this._pptokens[i];
-
-			if (pptoken.type() != 'whitespace' && pptoken.type() != 'linebreak') {
-				if (firstNonWhiteSpace === undefined) {
-					firstNonWhiteSpace = pptoken;
-				} else if (secondNonWhiteSpace === undefined) {
-					secondNonWhiteSpace = pptoken;
-				} else {
-					break;
-				}
-			}
-
-			if (firstNonWhiteSpace === undefined || firstNonWhiteSpace.value() !== '#') {
-				// text line
-				this._istextline = true;
-				this._dirname = null;
-			} else {
-				// dir line
-				this._istextline = false;
-				if (secondNonWhiteSpace === undefined) {
-					// empty-dir
-					this._dirname = '';
-				} else {
-					this._dirname = secondNonWhiteSpace.value();
-				}
-			}
-		}
-	}
-
-	isTextLine() {
-		if (this._istextline === undefined)
-			this._parseLine();
-
-		return this._istextline;
-	}
-
-	dirName() {
-		if (this._dirname === undefined)
-			this._parseLine();
-
-		return this._dirname;
-	}
-}
+import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
+import PPDirOrTextLine from './PPDirOrTextLine.js';
 
 export default class PPDirExecutor {
 	constructor(context, pptokens, source) {
@@ -128,12 +63,49 @@ export default class PPDirExecutor {
 
 	static process(context, pptokens, source) {
 		const direxec = new PPDirExecutor(context, pptokens, source);
+
 		let line;
 
 		while ((line = direxec.next()) !== null) {
-			console.log('~~~~');
-			console.log(line.isTextLine());
-			console.log(line.dirName());
+			if (!line.isTextLine()) {
+				switch (line.dirName()) {
+				case '':
+					break;
+				case 'if':
+					break;
+				case 'ifdef':
+					break;
+				case 'ifndef':
+					break;
+				case 'else':
+					break;
+				case 'elif':
+					break;
+				case 'endif':
+					break;
+				case 'include':
+					break;
+				case 'define':
+					break;
+				case 'undef':
+					break;
+				case 'line':
+					break;
+				case 'error':
+					break;
+				case 'pragma':
+					break;
+				default:
+					// non-directive
+					let dirToken = line.pptokens()[1];
+
+					direxec._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid preprocessing directive', dirToken.range())
+					);
+				}
+			} else {
+
+			}
 		}
 	}
 }

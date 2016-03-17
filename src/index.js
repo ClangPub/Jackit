@@ -16,14 +16,14 @@ src = LogicLineParser.process(ctx, src);
 
 let tokens = PPTokenizer.tokenize(ctx, src);
 
-for (let t of tokens) {
-	if (/^\s+$/.test(t.value())) {
-		console.log(`<${t.type()}(space):${t.value().length}`);
-	} else {
-		console.log(`<${t.type()}:${t.value()}>`);
-	}
-}
-
-console.log(ctx.generateDiagnostics());
+// for (let t of tokens) {
+// 	if (/^\s+$/.test(t.value())) {
+// 		console.log(`<${t.type()}(space):${t.value().length}`);
+// 	} else {
+// 		console.log(`<${t.type()}:${t.value()}>`);
+// 	}
+// }
 
 PPDirExecutor.process(ctx, tokens, src);
+
+console.log(ctx.generateDiagnostics());
