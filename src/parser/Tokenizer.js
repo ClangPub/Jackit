@@ -27,6 +27,7 @@
 import Token from '../ast/Token.js';
 import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
 import bigInt from 'big-integer';
+import utf8 from 'utf8';
 
 const identifiers = {
 	auto: true,
@@ -206,6 +207,22 @@ export default class Tokenizer {
 		});
 	}
 
+	_parseString(pptoken) {
+		let value = pptoken.value();
+		let delim = value[value.length - 1];
+		let prefixLen = value.indexOf(delim);
+		let prefix = value.substring(0, prefixLen);
+		value = value.substring(prefixLen + 1, value.length - 1);
+		// We need to process as multi-byte sequence, so first convert to UTF-8
+		value = utf8.encode(value);
+		// Todo: escape
+		value = utf8.decode(value);
+		return new Token(pptoken.range(), pptoken.type(), {
+			value: value,
+			prefix: prefix
+		});
+	}
+
 	convert(pptoken) {
 		switch (pptoken.type()) {
 			case 'whitespace':
@@ -276,7 +293,7 @@ export default class Tokenizer {
 			case 'string':
 			case 'character':
 				// TODO
-				return pptoken;
+				return this._parseString(pptoken);
 			case 'unknown':
 				this._context.emitDiagnostics(
 					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'unrecognized character in source',

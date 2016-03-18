@@ -20,6 +20,6 @@ for (let t of tokens) {
 	t = Tokenizer.convert(ctx, t);
 	if (!t) continue;
 	let v = t.value();
-	console.log('<' + t.type() + (v ? ',' + t.value() : '') + '>');
+	console.log('<' + t.type() + (v ? ',' + (v.value ? JSON.stringify(v) : v) : '') + '>');
 }
 console.log(ctx.generateDiagnostics());
