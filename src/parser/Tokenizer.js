@@ -26,6 +26,7 @@
 
 import Token from '../ast/Token.js';
 import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
+import bigInt from 'big-integer';
 
 const identifiers = {
 	auto: true,
@@ -76,6 +77,10 @@ const identifiers = {
 
 export default class Tokenizer {
 
+	constructor(context) {
+		this._context = context;
+	}
+
 	static isCharCodeAllowed(code) {
 		// Group 1
 		if (code < 0x100) {
@@ -119,13 +124,89 @@ export default class Tokenizer {
 		return false;
 	}
 
+	static _hexdigit(char) {
+		if (char >= 'A' && char <= 'Z')
+			return char.charCodeAt(0) - 'A'.charCodeAt(0) + 10;
+		if (char >= 'a' && char <= 'z')
+			return char.charCodeAt(0) - 'a'.charCodeAt(0) + 10;
+		if (char >= '0' && char <= '9')
+			return char.charCodeAt(0) - '0'.charCodeAt(0);
+		return -1;
+	}
+
+	static _digit(char) {
+		if (char >= '0' && char <= '9')
+			return char.charCodeAt(0) - '0'.charCodeAt(0);
+		return -1;
+	}
+
+	static _parseNumber(literal, base) {
+		let len;
+		for (len = 0; len < literal.length; len++) {
+			let d = Tokenizer._hexdigit(literal[len]);
+			if (d === -1 || d >= base) {
+				break;
+			}
+		}
+		return [bigInt(literal.substring(0, len), base), len];
+	}
+
 	static isCharCodeDisallowedInitially(code) {
 		if (code >= 0x300 && code <= 0x36F || code >= 0x1DC0 && code <= 0x1DFF || code >= 0x20D0 && code <= 0x20FF || code >= 0xFE20 && code <= 0xFE2F)
 			return true;
 		return false;
 	}
 
-	static convert(context, pptoken) {
+	_parseInteger(pptoken, start, base) {
+		let val = pptoken.value();
+		let [num, len] = Tokenizer._parseNumber(val.substring(start), base);
+		len += start;
+
+		// better diagnositics if "suffix" starts with digit
+		if (len < val.length && Tokenizer._digit(val[len]) !== -1) {
+			let len2 = len;
+			for (; len2 < val.length && Tokenizer._digit(val[len2]) !== -1; len2++);
+			if (len !== len2) {
+				let range = pptoken.range();
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid digit in ' + (base === 8 ? 'octal' : 'binary') + ' constant',
+						range._source.range(range._start + len, range._start + len2)));
+			}
+			len = len2;
+		}
+		let suffix = val.substring(len).toLowerCase();
+		switch (suffix) {
+			case '':
+			case 'u':
+			case 'l':
+			case 'll':
+			case 'ul':
+			case 'ull':
+				break;
+			case 'llu':
+				suffix = 'ull';
+				break;
+			case 'lu':
+				suffix = 'ul';
+				break;
+			default:
+				{
+					let range = pptoken.range();
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'unrecognized suffix on integer constant',
+							range._source.range(range._start + len, range._end)));
+					// Error recovery
+					suffix = '';
+				}
+				break;
+		}
+		return new Token(pptoken.range(), 'integer', {
+			value: num,
+			suffix: suffix
+		});
+	}
+
+	convert(pptoken) {
 		switch (pptoken.type()) {
 			case 'whitespace':
 			case 'linebreak':
@@ -143,13 +224,13 @@ export default class Tokenizer {
 							let code = parseInt(val.substring(i + 2, i + replaceLength), 16);
 							if (!Tokenizer.isCharCodeAllowed(code)) {
 								let r = pptoken.range();
-								context.emitDiagnostics(
+								this._context.emitDiagnostics(
 									new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'universal character name outside allowed range in identifiers',
 										r.source().range(r.start() + i, r.start() + i + replaceLength)));
 								replace = '';
 							} else if (i === 0 && Tokenizer.isCharCodeDisallowedInitially(code)) {
 								let r = pptoken.range();
-								context.emitDiagnostics(
+								this._context.emitDiagnostics(
 									new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'universal character name outside allowed range as initial character of an identifier',
 										r.source().range(r.start() + i, r.start() + i + replaceLength)));
 								replace = '';
@@ -163,12 +244,41 @@ export default class Tokenizer {
 					return new Token(pptoken.range(), 'identifier', val);
 				}
 			case 'number':
+				{
+					let val = pptoken.value();
+					let num, len, base, integer = true;
+					if (val[0] === '0') {
+						if (val[1] === 'b' || val[1] === 'B') {
+							this._context.emitDiagnostics(
+								new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'binary number is a GCC extension',
+									pptoken.range()));
+							return new Tokenizer(this._context)._parseInteger(pptoken, 2, 2);
+						}
+						if (val[1] === 'x' || val[1] === 'X') {
+							if (/[.pP+-]/.exec(val) === null) {
+								return this._parseInteger(pptoken, 2, 16);
+							}
+							// Hex float
+							throw new Error('Hex float not supported yet');
+						}
+						if (/[.eE+-]/.exec(val) === null) {
+							return this._parseInteger(pptoken, 1, 8);
+						}
+					} else {
+						if (/[.eE+-]/.exec(val) === null) {
+							return this._parseInteger(pptoken, 0, 10);
+						}
+					}
+					// Dec float
+					throw new Error('Dec float not supported yet');
+
+				}
 			case 'string':
 			case 'character':
 				// TODO
 				return pptoken;
 			case 'unknown':
-				context.emitDiagnostics(
+				this._context.emitDiagnostics(
 					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'unrecognized character in source',
 						pptoken.range()));
 				return null;
@@ -178,5 +288,10 @@ export default class Tokenizer {
 				// Punctuators, we can now safely discard its value
 				return new Token(pptoken.range(), pptoken.type());
 		}
+	}
+
+	static convert(context, pptoken) {
+		// TODO: This is temporary method, to be removed
+		return new Tokenizer(context).convert(pptoken);
 	}
 }
