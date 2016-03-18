@@ -4,14 +4,14 @@
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * * Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * 
+ *
  * * Redistributions in binary form must reproduce the above copyright notice,
  *   this list of conditions and the following disclaimer in the documentation
  *   and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -27,6 +27,7 @@
 import fs from 'fs';
 import path from 'path';
 import Color from '../src/diagnostics/Color.js';
+import equal from '../util/Equal.js';
 
 const filename = path.basename(__filename);
 const tests = fs.readdirSync(__dirname);
@@ -36,7 +37,7 @@ let totalPass = 0;
 let totalFail = 0;
 
 export function assert(expect, actual, description = '') {
-	if (expect !== actual) {
+	if (!equal(expect, actual)) {
 		failed = true;
 		console.error(`${Color.wrap('fail: ', Color.LIGHT_RED)}${currentTest}: ${description}: expected ${expect}, but have ${actual} instead.`);
 	}
