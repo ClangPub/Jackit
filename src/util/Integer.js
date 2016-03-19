@@ -37,7 +37,7 @@ export default class Integer {
 			this._values = result._values;
 			break;
 		case 2:
-			this._ispos  = arguments[1].length === 0 ? false : arguments[0];
+			this._ispos  = arguments[0];
 			this._values = arguments[1];
 			break;
 		}
@@ -103,6 +103,74 @@ export default class Integer {
 		}
 	}
 
+	sign() {
+		if (this._values.length === 0)
+			return 0;
+		else if (this._ispos)
+			return 1;
+		else
+			return -1;
+	}
+
+	cmp(rhs) {
+		if (this.sign() != rhs.sign())
+			return this.sign() - rhs.sign();
+		else if (this.sign() === 1)
+			return Integer._rawCmp(this._values, rhs._values);
+		else if (this.sign() === 0)
+			return 0;
+		else
+			return -Integer._rawCmp(this._values, rhs._values);
+	}
+
+	add(rhs) {
+		if (rhs.sign() === 0)
+			return this;
+
+		if (this.sign() === 0)
+			return rhs;
+
+		if (this.sign() === 1) {
+			if (rhs.sign() === 1) {
+				return new Integer(true, Integer._rawAdd(this._values, rhs._values));
+			} else {
+				let subRes = Integer._rawSub(this._values, rhs._values);
+				return new Integer(subRes.ispos, subRes.values);
+			}
+		} else {
+			if (rhs.sign() === 1) {
+				let subRes = Integer._rawSub(rhs._values, this._values);
+				return new Integer(subRes.ispos, subRes.values);
+			} else {
+				return new Integer(false, Integer._rawAdd(this._values, rhs._values));
+			}
+		}
+	}
+
+	sub(rhs) {
+		if (rhs.sign() === 0)
+			return this;
+
+		if (this.sign() === 0)
+			return new Integer(!rhs._ispos, rhs._values);
+
+		if (this.sign() === 1) {
+			if (rhs.sign() === 1) {
+					let subRes = Integer._rawSub(this._values, rhs._values);
+					return new Integer(subRes.ispos, subRes.values);
+			} else {
+					return new Integer(true, Integer._rawAdd(this._values, rhs._values));
+			}
+		} else {
+			if (rhs.sign() === 1) {
+				return new Integer(false, Integer._rawAdd(this._values, rhs._values));
+			} else {
+				let subRes = Integer._rawSub(rhs._values, this._values);
+				return new Integer(subRes.ispos, subRes.values);
+			}
+		}
+	}
+
 	static _shrink(value) {
 		let lastNonZero = -1;
 
@@ -162,9 +230,9 @@ export default class Integer {
 		values = Integer._shrink(values);
 
 		if (values.length === 0) {
-			return { isPos: false, values: [] };
+			return { ispos: false, values: [] };
 		} else if (values[values.length - 1] > 0) {
-			return { isPos: true, values };
+			return { ispos: true, values };
 		} else {
 			values = values.map(v => -v);
 
@@ -175,39 +243,11 @@ export default class Integer {
 				}
 			}
 
-			return { isPos: false, values: Integer._shrink(values) };
+			return { ispos: false, values: Integer._shrink(values) };
 		}
 	}
 
-	sign() {
-		if (this._values.length === 0)
-			return 0;
-		else if (this._ispos)
-			return 1;
-		else
-			return -1;
-	}
 
-	add(rhs) {
-		switch (this.sign()) {
-		case 1:
-			switch (rhs.sign()) {
-				case 1:
-					return new Integer(true, Integer._rawAdd(this._values, rhs._values));
-				case 0:
-					return this;
-				case -1:
-					let subRes = Integer._rawSub(this._values, rhs._values);
-
-					return new Integer(subRes.ispos, subRes.values);
-			}
-			break;
-		case 0:
-			return rhs;
-		case -1:
-
-		}
-	}
 }
 
 // BASE must be power of 10 so that toString() could be implemented easily.
