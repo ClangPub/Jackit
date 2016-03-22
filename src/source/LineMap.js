@@ -26,8 +26,9 @@
 
 export default class LineMap {
 
-	constructor(src) {
+	constructor(src, bias = 0) {
 		this._source = src;
+		this._bias = bias;
 		let lines = [0];
 		for (let i = 0;; i++) {
 			let c = this._source.at(i);
@@ -48,7 +49,7 @@ export default class LineMap {
 			let mid = (start + end) >>> 1;
 			let i = this._lines[mid];
 			if (index === i) {
-				return mid;
+				return mid + this._bias;
 			} else if (index > i) {
 				start = mid + 1;
 			} else {
@@ -56,10 +57,11 @@ export default class LineMap {
 			}
 		}
 
-		return start - 1;
+		return start - 1 + this._bias;
 	}
 
 	getLine(line) {
+		line -= this._bias;
 		if (line == this._lines.length - 1) {
 			return this._source.substring(this._lines[line]);
 		} else {
@@ -68,6 +70,7 @@ export default class LineMap {
 	}
 
 	getLineStartIndex(line) {
+		line -= this._bias;
 		return this._lines[line];
 	}
 
