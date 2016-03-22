@@ -4,7 +4,7 @@ import TrigraphParser from './parser/TrigraphParser.js';
 import LogicLineParser from './parser/LogicLineParser.js';
 import TrailingSpacePass from './pass/TrailingSpacePass.js';
 import PPTokenizer from './parser/PPTokenizer.js';
-import PPDirExecutor from './ppdir/PPDirExecutor.js';
+import Preprocessor from './parser/Preprocessor.js';
 
 import fs from 'fs';
 
@@ -24,6 +24,6 @@ let tokens = PPTokenizer.tokenize(ctx, src);
 // 	}
 // }
 
-PPDirExecutor.process(ctx, tokens, src);
+Preprocessor.process(ctx, tokens, src);
 
 console.log(ctx.generateDiagnostics());
