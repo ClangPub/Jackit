@@ -15,15 +15,12 @@ src = TrailingSpacePass.process(ctx, src);
 src = LogicLineParser.process(ctx, src);
 
 let tokens = PPTokenizer.tokenize(ctx, src);
+tokens = Preprocessor.process(ctx, tokens);
 
-// for (let t of tokens) {
-// 	if (/^\s+$/.test(t.value())) {
-// 		console.log(`<${t.type()}(space):${t.value().length}`);
-// 	} else {
-// 		console.log(`<${t.type()}:${t.value()}>`);
-// 	}
-// }
+for (let t of tokens) {
+	let v = t.value().replace('\n', '\\n');
+	console.log('<' + t.type() + (v ? ',' + v : '') + '>');
+}
 
-Preprocessor.process(ctx, tokens, src);
 
 console.log(ctx.generateDiagnostics());

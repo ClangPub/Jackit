@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, ClangPub
+ * Copyright (c) 2016, Sunchy321 and Gary Guo
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -25,87 +25,166 @@
  */
 
 import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
-import PPDirOrTextLine from './PPDirOrTextLine.js';
+import Source from '../source/Source.js';
+import TransformedSource from '../source/TransformedSource.js';
+import LineMap from '../source/LineMap.js';
 
-export default class PPDirExecutor {
-	constructor(context, pptokens, source) {
+export default class Preprocessor {
+	constructor(context, pptokens) {
 		this._context = context;
-		this._pptokens = pptokens;
-		this._source = source;
+		this._input = pptokens;
+		this._output = [];
+		this._source = pptokens[0].range().source();
 	}
 
-	next() {
-		if (this._pptokens.length === 0 || this._pptokens[0].type() === 'eof')
-			return null;
-
-		const getLineNumber = (tok) => this._source.linemap().getLineNumber(tok.range().start());
-
-		let pptokens = [];
-		let line, i;
-		const len = this._pptokens.length;
-
-		for (i = 0; i < len; ++i) {
-			let pptok = this._pptokens[i];
-
-			if (line === undefined) {
-				line = getLineNumber(pptok);
-				pptokens.push(pptok);
-			} else if (line === getLineNumber(pptok)) {
-				pptokens.push(pptok);
-			} else {
-				break;
+	_peekTokenNoWS() {
+		// We know there is an EOF token, so do not care about terminate condition
+		for (let i = 0;; i++) {
+			if (this._input[i].type() !== 'whitespace') {
+				return this._input[i];
 			}
 		}
-
-		this._pptokens.splice(0, i);
-		return new PPDirOrTextLine(this._context, pptokens, this._source);
 	}
 
-	static process(context, pptokens, source) {
-		const direxec = new PPDirExecutor(context, pptokens, source);
+	_readTokenNoWS() {
+		let token;
+		while ((token = this._input.shift()).type() === 'whitespace');
+		return token;
+	}
 
-		let line;
+	_skipLine() {
+		while (true) {
+			switch (this._input[0].type()) {
+				case 'linebreak':
+					this._input.shift();
+				case 'eof':
+					// Do not skip eof
+					return;
+			}
+			this._input.shift();
+		}
+	}
 
-		while ((line = direxec.next()) !== null) {
-			if (!line.isTextLine()) {
-				switch (line.dirName()) {
-				case '':
+	_calculateLineBias(range, nextLineNumber) {
+		let curRange = range.resolve();
+		let curLine = curRange.source().linemap().getLineNumber(curRange.end());
+		return nextLineNumber - curLine - 1;
+	}
+
+	_createFakeSource(source, filename, bias) {
+		if (source instanceof TransformedSource) {
+			return new TransformedSource(this._createFakeSource(source._source, filename, bias), source.content(), source._indexMap);
+		} else {
+			// Fake a source with given filename
+			let fakeSource = new Source(filename, source.content());
+			// Nasty trick, access private field to fake the line map
+			fakeSource._linemap = new LineMap(fakeSource, source.linemap()._bias + bias);
+			return fakeSource;
+		}
+	}
+
+	_processLineDirective() {
+		// TODO, consider macro and other case
+		let line = this._readTokenNoWS();
+		let file = this._readTokenNoWS();
+		let linebreak = this._readTokenNoWS();
+
+		// TODO Proper parse of digital sequence and file name
+		let lineNum = line.value();
+		let fileName = file.value();
+		fileName = fileName.substring(1, fileName.length - 1);
+
+		let bias = this._calculateLineBias(linebreak.range(), lineNum);
+		let fakeSource = this._createFakeSource(this._source, fileName, bias);
+		let untransformedFakeSource = fakeSource.range(0).resolve().source();
+		let untransformedSource = this._source.range(0).resolve().source();
+
+		// Nasty trick again, access private field to get the diagonistics and fix line information
+		for (let diag of this._context._diagnostics) {
+			let origRange = diag.range().resolve();
+			// If the diagnostic comes after the #line, we need to fix it
+			if (origRange.source() === untransformedSource && origRange.start() >= line.range().resolve().start()) {
+				origRange._source = untransformedFakeSource;
+			}
+			// Reassign, in case source is transformed
+			diag._range = origRange;
+		}
+
+		// More Nasty tricks, now transform the range of every succeeding token
+		for (let token of this._input) {
+			let origRange = token.range();
+			// No check needed
+			origRange._source = fakeSource;
+		}
+
+		this._source = fakeSource;
+	}
+
+	processTextLine() {
+		// TODO
+		while (this._input[0].type() !== 'eof') {
+			let token = this._input.shift();
+			if (token.type() === 'identifier') {
+				// TODO Macro
+				this._output.push(token);
+			} else {
+				this._output.push(token);
+				if (token.type() === 'linebreak') {
+					break;
+				}
+			}
+		}
+	}
+
+	processLine() {
+		// End of file
+		if (this._input[0].type() === 'eof') {
+			this._output.push(this._input.shift());
+			return false;
+		}
+
+		if (this._peekTokenNoWS().type() !== '#') {
+			this.processTextLine();
+			return true;
+		} else {
+			let hashToken = this._readTokenNoWS();
+			let directive = this._readTokenNoWS();
+
+			// Empty directive is allowed
+			if (directive.type() === 'linebreak') {
+				return true;
+			}
+
+			switch (directive.value()) {
+				case 'line':
+					this._processLineDirective();
 					break;
 				case 'if':
-					break;
 				case 'ifdef':
-					break;
 				case 'ifndef':
-					break;
-				case 'else':
-					break;
 				case 'elif':
-					break;
+				case 'else':
 				case 'endif':
-					break;
 				case 'include':
-					break;
 				case 'define':
-					break;
 				case 'undef':
-					break;
-				case 'line':
-					break;
 				case 'error':
-					break;
 				case 'pragma':
 					break;
 				default:
-					// non-directive
-					let dirToken = line.pptokens()[1];
-
-					direxec._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid preprocessing directive', dirToken.range())
-					);
-				}
-			} else {
-
+					this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid preprocessing directive', directive.range()));
+					// Error recovery, skip line
+					this._skipLine();
+					break;
 			}
+			return true;
 		}
 	}
+
+	static process(context, pptokens) {
+		let preprocessor = new Preprocessor(context, pptokens);
+		while (preprocessor.processLine());
+		return preprocessor._output;
+	}
+
 }
