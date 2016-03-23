@@ -307,25 +307,174 @@ export default class Preprocessor {
 		}
 	}
 
-	_processUndefDirective() {
+	_getMacroNameAndSkipLine(directiveName) {
 		let name = this._readTokenNoWS();
 		if (name.type() !== 'identifier') {
 			if (name.type() === 'linebreak') {
 				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name missing', name.range()));
-				return;
+				return null;
 			} else {
 				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name must be identifier', name.range()));
 				this._skipLine(); // Error recovery
-				return;
+				return null;
 			}
 		}
-		delete this._macros[name.value()];
+		this._scanExtraToken(directiveName);
+		return name;
+	}
+
+	_scanExtraToken(directiveName) {
 		let token = this._peekTokenNoWS();
 		if (token.type() !== 'linebreak') {
 			this._context.emitDiagnostics(
-				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, ' extra tokens at end of #undef directive', token.range()));
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'extra tokens at end of ' + directiveName + ' directive', token.range()));
 		}
 		this._skipLine();
+	}
+
+	_processUndefDirective() {
+		let name = this._getMacroNameAndSkipLine('#undef');
+		if (name) {
+			delete this._macros[name.value()];
+		}
+	}
+
+	_processIfdefDirective() {
+		let name = this._getMacroNameAndSkipLine('#ifdef');
+		let defined = false;
+		if (name) {
+			if (name.value() in this._macros) {
+				defined = true;
+			}
+		}
+		this._processIf(defined);
+	}
+
+	_processIfndefDirective() {
+		let name = this._getMacroNameAndSkipLine('#ifndef');
+		let notDefined = false;
+		if (name) {
+			if (!(name.value() in this._macros)) {
+				notDefined = true;
+			}
+		}
+		this._processIf(notDefined);
+	}
+
+	_processIfRetain() {
+		while (true) {
+			if (this._input[0].type() === 'eof') {
+				console.log('TODO: EOF Warning');
+				return null;
+			}
+
+			if (this._peekTokenNoWS().type() !== '#') {
+				this.processTextLine();
+			} else {
+				let hashToken = this._readTokenNoWS();
+				let directive = this._readTokenNoWS();
+
+				switch (directive.value()) {
+					case 'endif':
+					case 'elif':
+					case 'else':
+						return directive;
+				}
+				this._processDirective(directive);
+			}
+		}
+	}
+
+	_processIfDiscard() {
+		while (true) {
+			if (this._input[0].type() === 'eof') {
+				console.log('TODO: EOF Warning');
+				return null;
+			}
+
+			if (this._peekTokenNoWS().type() !== '#') {
+				this._skipLine();
+			} else {
+				let hashToken = this._readTokenNoWS();
+				let directive = this._readTokenNoWS();
+
+				switch (directive.value()) {
+					case 'endif':
+					case 'elif':
+					case 'else':
+						return directive;
+				}
+				this._skipLine();
+			}
+		}
+	}
+
+	_processIfDirective() {
+		this._context.emitDiagnostics(
+			new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, '#if is not implemented yet, treat as true', this._peekTokenNoWS().range()));
+		this._skipLine();
+		this._processIf(true);
+	}
+
+	_processIf(value) {
+		if (value) {
+			let directive = this._processIfRetain();
+			let elseAppeared = false;
+			switch (directive.value()) {
+				case 'endif':
+					this._scanExtraToken('#endif');
+					return;
+				case 'else':
+					elseAppeared = true;
+				case 'elif':
+					this._skipLine();
+					while (true) {
+						let directive = this._processIfDiscard();
+						switch (directive.value()) {
+							case 'endif':
+								this._scanExtraToken('#endif');
+								return;
+							case 'elif':
+							case 'else':
+								if (elseAppeared) {
+									this._context.emitDiagnostics(
+										new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#' + directive.value() + ' after #else', directive.range()));
+								}
+								if (directive.value() === 'else') {
+									elseAppeared = true;
+								}
+								this._skipLine();
+								break;
+						}
+					}
+			}
+		} else {
+			let directive = this._processIfDiscard();
+			switch (directive.value()) {
+				case 'endif':
+					this._scanExtraToken('#endif');
+					return;
+				case 'elif':
+					this._processIfDirective();
+					return;
+				case 'else':
+					this._scanExtraToken('#else');
+					while (true) {
+						let directive = this._processIfRetain();
+						switch (directive.value()) {
+							case 'endif':
+								this._scanExtraToken('#endif');
+								return;
+							case 'else':
+							case 'elif':
+								this._context.emitDiagnostics(
+									new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#' + directive.value() + ' after #else', directive.range()));
+								this._skipLine();
+								break;
+						}
+					}
+			}
+		}
 	}
 
 	processTextLine() {
@@ -344,6 +493,57 @@ export default class Preprocessor {
 		}
 	}
 
+	_processDirective(directive) {
+		// Empty directive is allowed
+		if (directive.type() === 'linebreak') {
+			return;
+		}
+
+		switch (directive.value()) {
+			case 'if':
+				this._processIfDirective();
+				break;
+			case 'ifdef':
+				this._processIfdefDirective();
+				break;
+			case 'ifndef':
+				this._processIfndefDirective();
+				break;
+			case 'elif':
+			case 'else':
+			case 'endif':
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#' + directive.value() + ' without #if', directive.range()));
+				this._skipLine();
+				break;
+			case 'include':
+				break;
+			case 'define':
+				this._processDefineDirective();
+				break;
+			case 'undef':
+				this._processUndefDirective();
+				break;
+			case 'line':
+				this._processLineDirective();
+				break;
+			case 'warning':
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#warning is a language extension', directive.range()));
+				this._processErrorDirective(directive);
+				break;
+			case 'error':
+				this._processErrorDirective(directive);
+				break;
+			case 'pragma':
+				break;
+			default:
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid preprocessing directive', directive.range()));
+				// Error recovery, skip line
+				this._skipLine();
+				break;
+		}
+	}
+
 	processLine() {
 		// End of file
 		if (this._input[0].type() === 'eof') {
@@ -358,44 +558,7 @@ export default class Preprocessor {
 			let hashToken = this._readTokenNoWS();
 			let directive = this._readTokenNoWS();
 
-			// Empty directive is allowed
-			if (directive.type() === 'linebreak') {
-				return true;
-			}
-
-			switch (directive.value()) {
-				case 'if':
-				case 'ifdef':
-				case 'ifndef':
-				case 'elif':
-				case 'else':
-				case 'endif':
-				case 'include':
-					break;
-				case 'define':
-					this._processDefineDirective();
-					break;
-				case 'undef':
-					this._processUndefDirective();
-					break;
-				case 'line':
-					this._processLineDirective();
-					break;
-				case 'warning':
-					this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#warning is a language extension', directive.range()));
-					this._processErrorDirective(directive);
-					break;
-				case 'error':
-					this._processErrorDirective(directive);
-					break;
-				case 'pragma':
-					break;
-				default:
-					this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid preprocessing directive', directive.range()));
-					// Error recovery, skip line
-					this._skipLine();
-					break;
-			}
+			this._processDirective(directive);
 			return true;
 		}
 	}
