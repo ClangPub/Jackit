@@ -69,16 +69,11 @@ export default class Preprocessor {
 	}
 
 	_skipLine() {
-		while (true) {
-			switch (this._input[0].type()) {
-				case 'linebreak':
-					this._input.shift();
-				case 'eof':
-					// Do not skip eof
-					return;
-			}
+		while (this._input[0].type() !== 'linebreak') {
 			this._input.shift();
 		}
+		this._input.shift();
+		return;
 	}
 
 	_calculateLineBias(range, nextLineNumber) {
@@ -143,16 +138,10 @@ export default class Preprocessor {
 		}
 		this._dropWS();
 		let text = '';
-		loop: while (true) {
-			switch (this._input[0].type()) {
-				case 'linebreak':
-					this._input.shift();
-				case 'eof':
-					// Do not skip eof
-					break loop;
-			}
-			text += this._input.shift().value();
+		while (this._input[0].type() !== 'linebreak') {
+			text += this._consume().value();
 		}
+		this._consume(); // Line break
 		this._context.emitDiagnostics(new DiagnosticMessage(type, text, directive.range()));
 	}
 
@@ -220,15 +209,10 @@ export default class Preprocessor {
 
 			// Get the replacement list
 			let line = [];
-			loop: while (true) {
-				switch (this._input[0].type()) {
-					case 'linebreak':
-						this._input.shift();
-					case 'eof':
-						break loop;
-				}
-				line.push(this._input.shift());
+			while (this._input[0].type() !== 'linebreak') {
+				line.push(this._consume());
 			}
+			this._consume();
 
 			// Trim trailing whitespace
 			if (line.length && line[line.length - 1].type() === 'whitespace') {
@@ -283,15 +267,10 @@ export default class Preprocessor {
 
 		// Get the replacement list
 		let line = [];
-		loop: while (true) {
-			switch (this._input[0].type()) {
-				case 'linebreak':
-					this._input.shift();
-				case 'eof':
-					break loop;
-			}
-			line.push(this._input.shift());
+		while (this._input[0].type() !== 'linebreak') {
+			line.push(this._consume());
 		}
+		this._consume();
 
 		// Trim trailing whitespace
 		if (line.length && line[line.length - 1].type() === 'whitespace') {
@@ -328,9 +307,30 @@ export default class Preprocessor {
 		}
 	}
 
+	_processUndefDirective() {
+		let name = this._readTokenNoWS();
+		if (name.type() !== 'identifier') {
+			if (name.type() === 'linebreak') {
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name missing', name.range()));
+				return;
+			} else {
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name must be identifier', name.range()));
+				this._skipLine(); // Error recovery
+				return;
+			}
+		}
+		delete this._macros[name.value()];
+		let token = this._peekTokenNoWS();
+		if (token.type() !== 'linebreak') {
+			this._context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, ' extra tokens at end of #undef directive', token.range()));
+		}
+		this._skipLine();
+	}
+
 	processTextLine() {
 		// TODO
-		while (this._input[0].type() !== 'eof') {
+		while (true) {
 			let token = this._input.shift();
 			if (token.type() === 'identifier') {
 				// TODO Macro
@@ -376,6 +376,7 @@ export default class Preprocessor {
 					this._processDefineDirective();
 					break;
 				case 'undef':
+					this._processUndefDirective();
 					break;
 				case 'line':
 					this._processLineDirective();

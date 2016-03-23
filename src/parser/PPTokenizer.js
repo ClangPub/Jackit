@@ -326,6 +326,11 @@ export default class PPTokenizer {
 			case '':
 				/* End of file */
 				--this._index;
+				// If the file does not end with a line break, add an extra linebreak
+				if (this._includeStage !== 1) {
+					this._includeStage = 1;
+					return this._buildTokenOnly('linebreak');
+				}
 				return this._buildToken('eof');
 			case ' ':
 			case '\t':
