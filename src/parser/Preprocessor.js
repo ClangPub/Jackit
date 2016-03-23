@@ -52,6 +52,12 @@ export default class Preprocessor {
 		return token;
 	}
 
+	_dropWS() {
+		while (this._input[0].type() === 'whitespace') {
+			this._input.shift();
+		}
+	}
+
 	_skipLine() {
 		while (true) {
 			switch (this._input[0].type()) {
@@ -120,6 +126,26 @@ export default class Preprocessor {
 		this._source = fakeSource;
 	}
 
+	_processErrorDirective(directive) {
+		let type = DiagnosticMessage.LEVEL_ERROR;
+		if (directive.value() === 'warning') {
+			type = DiagnosticMessage.LEVEL_WARNING;
+		}
+		this._dropWS();
+		let text = '';
+		loop: while (true) {
+			switch (this._input[0].type()) {
+				case 'linebreak':
+					this._input.shift();
+				case 'eof':
+					// Do not skip eof
+					break loop;
+			}
+			text += this._input.shift().value();
+		}
+		this._context.emitDiagnostics(new DiagnosticMessage(type, text, directive.range()));
+	}
+
 	processTextLine() {
 		// TODO
 		while (this._input[0].type() !== 'eof') {
@@ -156,9 +182,6 @@ export default class Preprocessor {
 			}
 
 			switch (directive.value()) {
-				case 'line':
-					this._processLineDirective();
-					break;
 				case 'if':
 				case 'ifdef':
 				case 'ifndef':
@@ -168,7 +191,17 @@ export default class Preprocessor {
 				case 'include':
 				case 'define':
 				case 'undef':
+					break;
+				case 'line':
+					this._processLineDirective();
+					break;
+				case 'warning':
+					this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#warning is a language extension', directive.range()));
+					this._processErrorDirective(directive);
+					break;
 				case 'error':
+					this._processErrorDirective(directive);
+					break;
 				case 'pragma':
 					break;
 				default:
