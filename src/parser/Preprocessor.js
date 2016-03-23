@@ -35,27 +35,37 @@ export default class Preprocessor {
 		this._input = pptokens;
 		this._output = [];
 		this._source = pptokens[0].range().source();
+		this._macros = Object.create(null);
 	}
 
 	_peekTokenNoWS() {
-		// We know there is an EOF token, so do not care about terminate condition
-		for (let i = 0;; i++) {
-			if (this._input[i].type() !== 'whitespace') {
-				return this._input[i];
-			}
+		if (this._input[0].type() === 'whitespace') {
+			return this._input[1];
+		} else {
+			return this._input[0];
 		}
 	}
 
 	_readTokenNoWS() {
-		let token;
-		while ((token = this._input.shift()).type() === 'whitespace');
-		return token;
+		this._dropWS();
+		return this._input.shift();
 	}
 
 	_dropWS() {
-		while (this._input[0].type() === 'whitespace') {
+		if (this._input[0].type() === 'whitespace') {
 			this._input.shift();
 		}
+	}
+
+	_consume() {
+		return this._input.shift();
+	}
+
+	_consumeIfNoWS(type) {
+		if (this._peekTokenNoWS().type() === type) {
+			return this._readTokenNoWS();
+		}
+		return null;
 	}
 
 	_skipLine() {
@@ -146,6 +156,178 @@ export default class Preprocessor {
 		this._context.emitDiagnostics(new DiagnosticMessage(type, text, directive.range()));
 	}
 
+	_processDefineDirective() {
+		let name = this._readTokenNoWS();
+		if (name.type() !== 'identifier') {
+			if (name.type() === 'linebreak') {
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name missing', name.range()));
+				return;
+			} else {
+				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name must be identifier', name.range()));
+				this._skipLine(); // Error recovery
+				return;
+			}
+		}
+		if (this._input[0].type() === '(') {
+			// Function-like
+			this._consume();
+
+			let parameters = [];
+			let vaarg = false;
+
+			let param = this._peekTokenNoWS();
+			switch (param.type()) {
+				case 'identifier':
+					this._readTokenNoWS();
+					parameters.push(param);
+					while (this._consumeIfNoWS(',')) {
+						param = this._readTokenNoWS();
+						if (param.type() === '...') {
+							vaarg = true;
+							break;
+						} else if (param.type() !== 'identifier') {
+							this._context.emitDiagnostics(
+								new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid token in macro parameter list', param.range()));
+							this._skipLine();
+							return;
+						}
+						parameters.push(param);
+					}
+					break;
+				case '...':
+					this._readTokenNoWS();
+					vaarg = true;
+					break;
+					// Treate linebreak as missing ) instead of invalid token
+				case 'linebreak':
+				case ')':
+					break;
+				default:
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid token in macro parameter list', param.range()));
+					this._skipLine();
+					return;
+			}
+
+			if (!this._consumeIfNoWS(')')) {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'missing \')\' in macro parameter list', this._peekTokenNoWS().range()));
+				this._skipLine();
+				return;
+			}
+
+			this._dropWS();
+
+			// Get the replacement list
+			let line = [];
+			loop: while (true) {
+				switch (this._input[0].type()) {
+					case 'linebreak':
+						this._input.shift();
+					case 'eof':
+						break loop;
+				}
+				line.push(this._input.shift());
+			}
+
+			// Trim trailing whitespace
+			if (line.length && line[line.length - 1].type() === 'whitespace') {
+				line.pop();
+			}
+
+			if (name.value() in this._macros) {
+				let old = this._macros[name.value()];
+				let same = false;
+				if (old.isFunctionLike && old.varadic === vaarg &&
+					old.parameters.length == parameters.length &&
+					old.replacementList.length === line.length) {
+					same = true;
+					let oldParam = old.parameters;
+					for (let i = 0; i < parameters.length; i++) {
+						if (oldParam[i].value() !== parameters[i].value()) {
+							same = false;
+							break;
+						}
+					}
+					if (same) {
+						let oldLine = old.replacementList;
+						for (let i = 0; i < line.length; i++) {
+							if (oldLine[i].value() !== line[i].value()) {
+								same = false;
+								break;
+							}
+						}
+					}
+				}
+				if (!same) {
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
+				}
+			} else {
+				this._macros[name.value()] = {
+					isFunctionLike: true,
+					nameToken: name,
+					varadic: vaarg,
+					parameters: parameters,
+					replacementList: line
+				};
+			}
+			return;
+		} else if (this._input[0].type() !== 'whitespace' && this._input[0].type() !== 'linebreak') {
+			this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'whitespace is required after the macro name', this._input[0].range()));
+		}
+
+		this._dropWS();
+
+		// Get the replacement list
+		let line = [];
+		loop: while (true) {
+			switch (this._input[0].type()) {
+				case 'linebreak':
+					this._input.shift();
+				case 'eof':
+					break loop;
+			}
+			line.push(this._input.shift());
+		}
+
+		// Trim trailing whitespace
+		if (line.length && line[line.length - 1].type() === 'whitespace') {
+			line.pop();
+		}
+
+		if (name.value() in this._macros) {
+			let old = this._macros[name.value()];
+			let same = false;
+			if (!old.isFunctionLike) {
+				let oldLine = old.replacementList;
+				if (oldLine.length === line.length) {
+					same = true;
+					for (let i = 0; i < line.length; i++) {
+						if (oldLine[i].value() !== line[i].value()) {
+							same = false;
+							break;
+						}
+					}
+				}
+			}
+			if (!same) {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
+			}
+		} else {
+			this._macros[name.value()] = {
+				isFunctionLike: false,
+				nameToken: name,
+				replacementList: line
+			};
+		}
+	}
+
 	processTextLine() {
 		// TODO
 		while (this._input[0].type() !== 'eof') {
@@ -189,7 +371,10 @@ export default class Preprocessor {
 				case 'else':
 				case 'endif':
 				case 'include':
+					break;
 				case 'define':
+					this._processDefineDirective();
+					break;
 				case 'undef':
 					break;
 				case 'line':
