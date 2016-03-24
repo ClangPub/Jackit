@@ -79,7 +79,15 @@ export default class Preprocessor {
 			this._input.shift();
 		}
 		this._input.shift();
-		return;
+	}
+
+	_consumeLine() {
+		let line = [];
+		while (this._input[0].type() !== 'linebreak') {
+			line.push(this._input.shift());
+		}
+		line.push(this._input.shift());
+		return line;
 	}
 
 	_calculateLineBias(range, nextLineNumber) {
@@ -101,15 +109,39 @@ export default class Preprocessor {
 	}
 
 	_processLineDirective() {
-		// TODO, consider macro and other case
-		let line = this._readTokenNoWS();
-		let file = this._readTokenNoWS();
-		let linebreak = this._readTokenNoWS();
+		// Parse rest of line
+		let tokens = this._macroExpand(this._consumeLine());
+		let linebreak = tokens[tokens.length - 1];
+		let lineNumPos = this._firstEffectiveElement(tokens);
+		if (lineNumPos === -1) {
+			this._context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#line directive requires a positive integer argument', linebreak.range()));
+			return;
+		}
 
+		let line = tokens[lineNumPos];
+		if (line.type() !== 'number') {
+			this._context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#line directive requires a positive integer argument', line.range()));
+			return;
+		}
 		// TODO Proper parse of digital sequence and file name
 		let lineNum = line.value();
-		let fileName = file.value();
-		fileName = fileName.substring(1, fileName.length - 1);
+
+		let filePos = this._firstEffectiveElement(tokens, lineNumPos + 1);
+		let fileName;
+		if (filePos === -1) {
+			fileName = this._source().filename();
+		} else {
+			let file = tokens[filePos];
+			if (file.type() !== 'string') {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid filename for #line directive', file.range()));
+				return;
+			}
+			fileName = file.value();
+			fileName = fileName.substring(1, fileName.length - 1);
+		}
 
 		let bias = this._calculateLineBias(linebreak.range(), lineNum);
 		let fakeSource = this._createFakeSource(this._source, fileName, bias);
@@ -484,7 +516,22 @@ export default class Preprocessor {
 	}
 
 	_processMacro(token) {
-		let macro = this._macros[token.value()];
+		let macroName = token.value();
+
+		if (macroName === '__FILE__') {
+			this._input.unshift(
+				new MacroReplacedPPToken(
+					new PPToken(token.range(), 'string', this._escapeString(token.range().source().filename())), token));
+			return;
+		} else if (macroName === '__LINE__') {
+			this._input.unshift(
+				new MacroReplacedPPToken(
+					new PPToken(token.range(), 'number',
+						token.range().source().linemap().getLineNumber(token.range().start()) + 1 + ''), token));
+			return;
+		}
+
+		let macro = this._macros[macroName];
 
 		// Check eligibility to replace
 		let cause = token;
@@ -497,7 +544,9 @@ export default class Preprocessor {
 			}
 		}
 
+
 		if (!macro.isFunctionLike) {
+			let macroName = token.value();
 			this._input.unshift(...macro.replacementList.map(tok => new MacroReplacedPPToken(tok, token)));
 		} else {
 			this._waitlparen = true;
@@ -535,6 +584,13 @@ export default class Preprocessor {
 			index--;
 		}
 		return index;
+	}
+
+	_firstEffectiveElement(tokens, index = 0) {
+		while (index < tokens.length && (tokens[index].type() === 'whitespace' || tokens[index].type() === 'linebreak')) {
+			index++;
+		}
+		return index === tokens.length ? -1 : index;
 	}
 
 	_escapeString(string) {
@@ -708,6 +764,7 @@ export default class Preprocessor {
 					let next = result[nextIndex];
 					let concat;
 					if (prev && next) {
+						// TODO, deal appropriately
 						concat = new PPToken(prev.range(), prev.type(), prev.value() + next.value());
 					} else if (prev) {
 						concat = prev;
