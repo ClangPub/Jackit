@@ -614,7 +614,7 @@ export default class Preprocessor {
 		if (a.source() !== b.source()) {
 			throw new Error('Internal Error');
 		}
-		return a.source.range(Math.min(a.start(), b.start()), a.caret(), Math.max(a.end(), b.end()));
+		return a.source().range(Math.min(a.start(), b.start()), a.caret(), Math.max(a.end(), b.end()));
 	}
 
 	_macroExpand(tokens) {
