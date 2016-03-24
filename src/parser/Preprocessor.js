@@ -28,6 +28,8 @@ import DiagnosticMessage from '../diagnostics/DiagnosticMessage.js';
 import Source from '../source/Source.js';
 import TransformedSource from '../source/TransformedSource.js';
 import LineMap from '../source/LineMap.js';
+import MacroReplacedPPToken from '../ast/MacroReplacedPPToken.js';
+import PPToken from '../ast/PPToken.js';
 
 export default class Preprocessor {
 	constructor(context, pptokens) {
@@ -36,6 +38,10 @@ export default class Preprocessor {
 		this._output = [];
 		this._source = pptokens[0].range().source();
 		this._macros = Object.create(null);
+		this._macros['__FILE__'] = null;
+		this._macros['__LINE__'] = null;
+		this._paren = 0;
+		this._waitlparen = false;
 	}
 
 	_peekTokenNoWS() {
@@ -477,18 +483,327 @@ export default class Preprocessor {
 		}
 	}
 
-	processTextLine() {
-		// TODO
-		while (true) {
-			let token = this._input.shift();
-			if (token.type() === 'identifier') {
-				// TODO Macro
+	_processMacro(token) {
+		let macro = this._macros[token.value()];
+
+		// Check eligibility to replace
+		let cause = token;
+		while (cause instanceof MacroReplacedPPToken) {
+			cause = cause.cause();
+			if (cause.value() === token.value()) {
+				// Previous expanded, abort
 				this._output.push(token);
+				return;
+			}
+		}
+
+		if (!macro.isFunctionLike) {
+			this._input.unshift(...macro.replacementList.map(tok => new MacroReplacedPPToken(tok, token)));
+		} else {
+			this._waitlparen = true;
+			this._output.push(new MacroReplacedPPToken(
+				new PPToken(null, 'macro', null), token));
+		}
+	}
+
+	_processMacroNoArgList() {
+		let i, tok;
+		for (i = this._output.length - 2; i >= 0; i--) {
+			tok = this._output[i];
+			if (tok.type() === 'macro') {
+				break;
+			}
+		}
+		if (i < 0) {
+			throw new Error('Internal Error');
+		}
+		this._output[i] = tok.cause();
+	}
+
+	_stripSpaceAndLine(tokens) {
+		while (tokens.length && (tokens[0].type() === 'whitespace' || tokens[0].type() === 'linebreak')) {
+			tokens.shift();
+		}
+		while (tokens.length && (tokens[tokens.length - 1].type() === 'whitespace' || tokens[tokens.length - 1].type() === 'linebreak')) {
+			tokens.pop();
+		}
+		return tokens;
+	}
+
+	_lastEffectiveElement(tokens, index = tokens.length - 1) {
+		while (index >= 0 && (tokens[index].type() === 'whitespace' || tokens[index].type() === 'linebreak')) {
+			index--;
+		}
+		return index;
+	}
+
+	_escapeString(string) {
+		let ret = '"';
+		for (let i = 0; i < string.length; i++) {
+			if (string[i] === '"') {
+				ret += '\\"';
+			} else if (string[i] === '\\') {
+				ret += '\\\\';
+			} else if (string[i] === '\n') {
+				ret += '\\\n';
 			} else {
-				this._output.push(token);
-				if (token.type() === 'linebreak') {
+				ret += string[i];
+			}
+		}
+		ret += '"';
+		return ret;
+	}
+
+	_rangeConcat(a, b) {
+		if (a.source() !== b.source()) {
+			throw new Error('Internal Error');
+		}
+		return a.source.range(Math.min(a.start(), b.start()), a.caret(), Math.max(a.end(), b.end()));
+	}
+
+	_macroExpand(tokens) {
+		let output = [];
+		loop: while (tokens.length) {
+			let macroNameToken = tokens.shift();
+			if (macroNameToken.type() !== 'identifier' || !(macroNameToken.value() in this._macros)) {
+				output.push(macroNameToken);
+				continue;
+			}
+
+			let macroName = macroNameToken.value();
+			if (macroName === '__FILE__') {
+				tokens.unshift(
+					new MacroReplacedPPToken(
+						new PPToken(macroNameToken.range(), 'string', this._escapeString(macroNameToken.range().source().filename())), macroNameToken));
+				continue;
+			} else if (macroName === '__LINE__') {
+				tokens.unshift(
+					new MacroReplacedPPToken(
+						new PPToken(macroNameToken.range(), 'number',
+							macroNameToken.range().source().linemap().getLineNumber(macroNameToken.range().start()) + 1 + ''), macroNameToken));
+				continue;
+			}
+
+			// Check eligibility to replace
+			let cause = macroNameToken;
+			while (cause instanceof MacroReplacedPPToken) {
+				cause = cause.cause();
+				if (cause.value() === macroName) {
+					output.push(macroNameToken);
+					continue loop;
+				}
+			}
+
+			let macro = this._macros[macroName];
+			if (!macro.isFunctionLike) {
+				tokens.unshift(...macro.replacementList.map(tok => new MacroReplacedPPToken(tok, macroNameToken)));
+				continue;
+			}
+
+			// Check if the macro is actually invoked
+			let lparenPos = -1;
+			for (let i = 0; i < tokens.length; i++) {
+				let t = tokens[i];
+				if (t.type() === '(') {
+					lparenPos = i;
 					break;
 				}
+				if (t.type() !== 'whitespace' && t.type() !== 'linebreak') {
+					break;
+				}
+			}
+			if (lparenPos === -1) {
+				output.push(macroNameToken);
+				continue;
+			}
+
+			// let debugBeforeExpansion = '';
+			// for (let t of output) {
+			// 	debugBeforeExpansion += t.value();
+			// }
+			// debugBeforeExpansion += macroName;
+			// for (let t of tokens) {
+			// 	debugBeforeExpansion += t.value();
+			// }
+
+			// Drop left parenthesis
+			tokens.splice(0, lparenPos + 1);
+
+			let argList = [];
+			let delimiters = [];
+
+			let lparen = 0;
+			for (let i = 0; i < tokens.length; i++) {
+				let tok = tokens[i];
+				if (lparen === 0) {
+					if (tok.type() === ',' || tok.type() === ')') {
+						argList.push(tokens.splice(0, i));
+						delimiters.push(tok);
+						tokens.splice(0, 1);
+						i = -1; // Start from 0 again
+					}
+					if (tok.type() === ')') {
+						break;
+					}
+				}
+				if (tok.type() === '(') {
+					lparen++;
+				} else if (tok.type() === ')') {
+					lparen--;
+				}
+			}
+
+			let result = [];
+			loop2: for (let token of macro.replacementList) {
+				if (token.type() === 'identifier') {
+					for (let i = 0; i < macro.parameters.length; i++) {
+						if (macro.parameters[i].value() === token.value()) {
+							let lastTokIndex = this._lastEffectiveElement(result);
+							if (lastTokIndex >= 0 && result[lastTokIndex].type() === '#') {
+								// Stringify
+								let str = '';
+								let range = null;
+								for (let t of argList[i]) {
+									str += t.value();
+									if (range) {
+										range = this._rangeConcat(range, t.range());
+									} else {
+										range = t.range();
+									}
+								}
+								result.splice(lastTokIndex);
+								result.push(new PPToken(range, 'string', this._escapeString(str)));
+								continue loop2;
+							} else {
+								let replaceArg = this._macroExpand(argList[i].slice());
+								this._stripSpaceAndLine(replaceArg);
+								if (replaceArg.length === 0) {
+									result.push(null);
+								}
+								// Replace with argument
+								for (let t of replaceArg) {
+									result.push(t);
+								}
+								continue loop2;
+							}
+						}
+					}
+				}
+
+				result.push(new MacroReplacedPPToken(token, macroNameToken));
+			}
+
+			for (let i = 1; i < result.length - 1; i++) {
+				if (result[i] && result[i].type() === '##') {
+					let prevIndex = i - 1;
+					while (result[prevIndex] && (result[prevIndex].type() === 'whitespace' || result[prevIndex].type() === 'linebreak')) {
+						prevIndex--;
+					}
+
+					let nextIndex = i + 1;
+					while (result[nextIndex] && (result[nextIndex].type() === 'whitespace' || result[nextIndex].type() === 'linebreak')) {
+						nextIndex++;
+					}
+					let prev = result[prevIndex];
+					let next = result[nextIndex];
+					let concat;
+					if (prev && next) {
+						concat = new PPToken(prev.range(), prev.type(), prev.value() + next.value());
+					} else if (prev) {
+						concat = prev;
+					} else if (next) {
+						concat = next;
+					}
+					result.splice(prevIndex, nextIndex - prevIndex + 1, concat);
+					i = prevIndex;
+				}
+			}
+
+			for (let i = 0; i < result.length; i++) {
+				if (!result[i]) {
+					result.splice(i, 1);
+					i--;
+				}
+			}
+
+			tokens.unshift(...result);
+
+			// let debugAfterExpansion = '';
+			// for (let t of output) {
+			// 	debugAfterExpansion += t.value();
+			// }
+			// for (let t of tokens) {
+			// 	debugAfterExpansion += t.value();
+			// }
+
+			// console.log('Before Expansion:');
+			// console.log(debugBeforeExpansion);
+			// console.log('After  Expansion:');
+			// console.log(debugAfterExpansion);
+		}
+
+		return output;
+	}
+
+	_processMacroFinsihArgList() {
+		let i, tok;
+		for (i = this._output.length - 2; i >= 0; i--) {
+			tok = this._output[i];
+			if (tok.type() === 'macro') {
+				break;
+			}
+		}
+		if (i < 0) {
+			throw new Error('Internal Error');
+		}
+		let args = this._output.splice(i, this._output.length - i + 1);
+		args[0] = args[0].cause();
+
+		this._input.unshift(...this._macroExpand(args));
+	}
+
+	processTextLine() {
+		while (true) {
+			let token = this._input.shift();
+			if (token.type() === 'linebreak') {
+				this._output.push(token);
+				break;
+			}
+			if (token.type() === 'whitespace') {
+				this._output.push(token);
+				continue;
+			}
+			if (this._waitlparen) {
+				if (token.type() !== '(') {
+					this._waitlparen = false;
+					this._processMacroNoArgList();
+				} else {
+					// Start macro replacement
+					this._waitlparen = false;
+					this._paren++;
+					this._output.push(token);
+					continue;
+				}
+			}
+			if (this._paren !== 0) {
+				if (token.type() === '(') {
+					this._paren++;
+					this._output.push(token);
+				} else if (token.type() === ')') {
+					this._paren--;
+					this._output.push(token);
+					if (this._paren === 0) {
+						this._processMacroFinsihArgList();
+					}
+				} else {
+					this._output.push(token);
+				}
+				continue;
+			}
+			if (token.type() === 'identifier' && token.value() in this._macros) {
+				this._processMacro(token);
+			} else {
+				this._output.push(token);
 			}
 		}
 	}

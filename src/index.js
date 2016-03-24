@@ -19,7 +19,7 @@ tokens = Preprocessor.process(ctx, tokens);
 
 for (let t of tokens) {
 	let v = t.value().replace('\n', '\\n');
-	console.log('<' + t.type() + (v ? ',' + v : '') + '>');
+	process.stdout.write(t.value());
 }
 
 
