@@ -131,13 +131,17 @@ export default class Preprocessor {
 		let filePos = this._firstEffectiveElement(tokens, lineNumPos + 1);
 		let fileName;
 		if (filePos === -1) {
-			fileName = this._source().filename();
+			fileName = this._source.filename();
 		} else {
 			let file = tokens[filePos];
 			if (file.type() !== 'string') {
 				this._context.emitDiagnostics(
 					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid filename for #line directive', file.range()));
 				return;
+			} else if (!file.value().startsWith('"') || !file.value().endsWith('"')) {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'filename must be a character string literal (without encoding prefix)', file.range())
+				);
 			}
 			fileName = file.value();
 			fileName = fileName.substring(1, fileName.length - 1);
@@ -318,7 +322,9 @@ export default class Preprocessor {
 		if (name.value() in this._macros) {
 			let old = this._macros[name.value()];
 			let same = false;
-			if (!old.isFunctionLike) {
+			if (old === null) {
+				// built-in macro, never be same
+			} else if (!old.isFunctionLike) {
 				let oldLine = old.replacementList;
 				if (oldLine.length === line.length) {
 					same = true;
@@ -331,10 +337,15 @@ export default class Preprocessor {
 				}
 			}
 			if (!same) {
-				this._context.emitDiagnostics(
-					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
-				this._context.emitDiagnostics(
-					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
+				if (old === null) {
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'redefining built-in macro', name.range()));
+				} else {
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
+					this._context.emitDiagnostics(
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
+				}
 			}
 		} else {
 			this._macros[name.value()] = {
@@ -464,6 +475,7 @@ export default class Preprocessor {
 					return;
 				case 'else':
 					elseAppeared = true;
+					/* falls through */
 				case 'elif':
 					this._skipLine();
 					while (true) {
