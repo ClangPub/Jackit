@@ -533,13 +533,14 @@ export default class Preprocessor {
 		if (macroName === '__FILE__') {
 			this._input.unshift(
 				new MacroReplacedPPToken(
-					new PPToken(token.range(), 'string', this._escapeString(token.range().source().filename())), token));
+					new PPToken(token.range(), 'string', this._escapeString(this._initialCause(token).range().source().filename())), token));
 			return;
 		} else if (macroName === '__LINE__') {
+			let range = this._initialCause(token).range().resolve();
 			this._input.unshift(
 				new MacroReplacedPPToken(
 					new PPToken(token.range(), 'number',
-						token.range().source().linemap().getLineNumber(token.range().start()) + 1 + ''), token));
+						range.source().linemap().getLineNumber(range.start()) + 1 + ''), token));
 			return;
 		}
 
@@ -629,6 +630,14 @@ export default class Preprocessor {
 		return a.source().range(Math.min(a.start(), b.start()), a.caret(), Math.max(a.end(), b.end()));
 	}
 
+	_initialCause(pptoken) {
+		let cause = pptoken;
+		while (cause instanceof MacroReplacedPPToken) {
+			cause = cause.cause();
+		}
+		return cause;
+	}
+
 	_macroExpand(tokens) {
 		let output = [];
 		loop: while (tokens.length) {
@@ -642,13 +651,14 @@ export default class Preprocessor {
 			if (macroName === '__FILE__') {
 				tokens.unshift(
 					new MacroReplacedPPToken(
-						new PPToken(macroNameToken.range(), 'string', this._escapeString(macroNameToken.range().source().filename())), macroNameToken));
+						new PPToken(macroNameToken.range(), 'string', this._escapeString(this._initialCause(macroNameToken).range().source().filename())), macroNameToken));
 				continue;
 			} else if (macroName === '__LINE__') {
+				let range = this._initialCause(macroNameToken).range().resolve();
 				tokens.unshift(
 					new MacroReplacedPPToken(
 						new PPToken(macroNameToken.range(), 'number',
-							macroNameToken.range().source().linemap().getLineNumber(macroNameToken.range().start()) + 1 + ''), macroNameToken));
+							range.source().linemap().getLineNumber(range.start()) + 1 + ''), macroNameToken));
 				continue;
 			}
 
