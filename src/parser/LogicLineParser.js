@@ -38,7 +38,7 @@ export default class LogicLineParser {
 		}
 
 		let startIndex = 0;
-		let builder = '';
+		let builder = null;
 		let mapping = null;
 
 		if (content[content.length - 1] !== '\n') {
@@ -51,8 +51,9 @@ export default class LogicLineParser {
 
 		for (let i = 0; i < content.length - 1; i++) {
 			if (content[i] === '\\' && content[i + 1] === '\n') {
-				if (!builder) {
+				if (builder === null) {
 					mapping = new IndexMap();
+					builder = '';
 				}
 				builder += content.substring(startIndex, i);
 				i++;
@@ -61,14 +62,12 @@ export default class LogicLineParser {
 			}
 		}
 
-		if (!builder) {
+		if (builder === null) {
 			return source;
 		} else {
 			builder += content.substring(startIndex);
 			return new TransformedSource(source, builder, mapping);
 		}
-
-		return source;
 	}
 
 }
