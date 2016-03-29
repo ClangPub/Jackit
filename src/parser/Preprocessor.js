@@ -30,6 +30,7 @@ import TransformedSource from '../source/TransformedSource.js';
 import LineMap from '../source/LineMap.js';
 import MacroReplacedPPToken from '../ast/MacroReplacedPPToken.js';
 import PPToken from '../ast/PPToken.js';
+import { Macro, ObjectMacro, FunctionMacro } from '../ast/Macro.js';
 
 export default class Preprocessor {
 	constructor(context, pptokens) {
@@ -124,7 +125,12 @@ export default class Preprocessor {
 			this._context.emitDiagnostics(
 				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '#line directive requires a positive integer argument', line.range()));
 			return;
+		} else if (!/^[0-9]+$/.test(line.value())) {
+			this._context.emitDiagnostics(
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'line number must only consist of digits', line.range()));
+			return;
 		}
+
 		// TODO Proper parse of digital sequence and file name
 		let lineNum = line.value();
 
@@ -189,170 +195,226 @@ export default class Preprocessor {
 
 	_processDefineDirective() {
 		let name = this._readTokenNoWS();
-		if (name.type() !== 'identifier') {
-			if (name.type() === 'linebreak') {
-				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name missing', name.range()));
-				return;
-			} else {
-				this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name must be identifier', name.range()));
-				this._skipLine(); // Error recovery
-				return;
-			}
-		}
+
+		if (name.type() !== 'identifier')
+			if (name.type() === 'linebreak')
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name missing', name.range());
+			else
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'macro name must be identifier', name.range());
+
+		if (name.value() === '__VA_ARGS__')
+			return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot be used as a macro name', name.range());
+
+		let isFunc;
+
+		let parameters = [];
+		let paramListTok = [];
+		let isVar = false;
+		let rparen;
+
 		if (this._input[0].type() === '(') {
 			// Function-like
+			isFunc = true;
+
 			this._consume();
 
-			let parameters = [];
-			let vaarg = false;
+			parseParam: while (true) {
+				let nextTok = this._peekTokenNoWS();
 
-			let param = this._peekTokenNoWS();
-			switch (param.type()) {
+				switch (nextTok.type()) {
 				case 'identifier':
-					this._readTokenNoWS();
-					parameters.push(param);
-					while (this._consumeIfNoWS(',')) {
-						param = this._readTokenNoWS();
-						if (param.type() === '...') {
-							vaarg = true;
-							break;
-						} else if (param.type() !== 'identifier') {
-							this._context.emitDiagnostics(
-								new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid token in macro parameter list', param.range()));
-							this._skipLine();
-							return;
-						}
-						parameters.push(param);
-					}
-					break;
+				case ',':
 				case '...':
-					this._readTokenNoWS();
-					vaarg = true;
+					// valid pp-token, analyse after
 					break;
-					// Treate linebreak as missing ) instead of invalid token
-				case 'linebreak':
 				case ')':
-					break;
+					rparen = this._consume();
+					break parseParam;
+				case 'linebreak':
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'missing ) in function-like macro parameter list', nextTok.range());
 				default:
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid token in macro parameter list', param.range()));
-					this._skipLine();
-					return;
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'invalid token in macro parameter list', nextTok.range());
+				}
+
+				paramListTok.push(this._consume());
 			}
 
-			if (!this._consumeIfNoWS(')')) {
-				this._context.emitDiagnostics(
-					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'missing \')\' in macro parameter list', this._peekTokenNoWS().range()));
-				this._skipLine();
-				return;
-			}
+			let prevIsComma = true;
 
-			this._dropWS();
+			// Analyse the parameter list
+			while (paramListTok.length !== 0) {
+				let currTok = paramListTok[0];
 
-			// Get the replacement list
-			let line = [];
-			while (this._input[0].type() !== 'linebreak') {
-				line.push(this._consume());
-			}
-			this._consume();
-
-			// Trim trailing whitespace
-			if (line.length && line[line.length - 1].type() === 'whitespace') {
-				line.pop();
-			}
-
-			if (name.value() in this._macros) {
-				let old = this._macros[name.value()];
-				let same = false;
-				if (old.isFunctionLike && old.varadic === vaarg &&
-					old.parameters.length == parameters.length &&
-					old.replacementList.length === line.length) {
-					same = true;
-					let oldParam = old.parameters;
-					for (let i = 0; i < parameters.length; i++) {
-						if (oldParam[i].value() !== parameters[i].value()) {
-							same = false;
-							break;
+				switch (currTok.type()) {
+				case '...':
+					if (prevIsComma) {
+						if (paramListTok.length !== 1) {
+							return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the ... notation must appear at the end of parameter list', currTok.range());
+						} else {
+							isVar = true;
 						}
+					} else {
+						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'no comma before ellipsis', currTok.range());
 					}
-					if (same) {
-						let oldLine = old.replacementList;
-						for (let i = 0; i < line.length; i++) {
-							if (oldLine[i].value() !== line[i].value()) {
-								same = false;
-								break;
+					break;
+				case ',':
+					if (prevIsComma) {
+						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'parameter name missing', currTok.range());
+					} else {
+						prevIsComma = true;
+					}
+					break;
+				case 'identifier':
+					if (prevIsComma) {
+						if (currTok.value() === '__VA_ARGS__')
+							return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot be used as a macro parameter', currTok.range());
+
+						for (let param of parameters) {
+							if (param.value() === currTok.value()) {
+								return [
+									new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'parameter must be unique in a function-like macro', currTok.range()),
+									new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous is here', param.range())
+								];
 							}
 						}
+
+
+						parameters.push(currTok);
+						prevIsComma = false;
+					} else {
+						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'no comma between parameters', currTok.range());
 					}
+					break;
 				}
-				if (!same) {
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
-				}
-			} else {
-				this._macros[name.value()] = {
-					isFunctionLike: true,
-					nameToken: name,
-					varadic: vaarg,
-					parameters: parameters,
-					replacementList: line
-				};
+
+				paramListTok.shift();
 			}
-			return;
-		} else if (this._input[0].type() !== 'whitespace' && this._input[0].type() !== 'linebreak') {
-			this._context.emitDiagnostics(new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'whitespace is required after the macro name', this._input[0].range()));
+		} else {
+			// Object-like
+			isFunc = false;
+
+			if (!this._input[0].isWhitespace()) {
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'there shall be white space between identifier and replacement list of an object-like macro', this._input[0].range());
+			}
 		}
 
 		this._dropWS();
 
 		// Get the replacement list
-		let line = [];
+		let repList = [];
+
 		while (this._input[0].type() !== 'linebreak') {
-			line.push(this._consume());
+			if (this._input[0].type() === 'identifier' && this._input[0].value() === '__VA_ARGS__' && !isVar)
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot appear in the replacement list of function-like macro without ellipsis notation', this._input[0].range());
+
+			repList.push(this._consume());
 		}
-		this._consume();
 
 		// Trim trailing whitespace
-		if (line.length && line[line.length - 1].type() === 'whitespace') {
-			line.pop();
+		if (repList.length && repList[repList.length - 1].type() === 'whitespace') {
+			repList.pop();
 		}
 
-		if (name.value() in this._macros) {
-			let old = this._macros[name.value()];
-			let same = false;
-			if (old === null) {
-				// built-in macro, never be same
-			} else if (!old.isFunctionLike) {
-				let oldLine = old.replacementList;
-				if (oldLine.length === line.length) {
-					same = true;
-					for (let i = 0; i < line.length; i++) {
-						if (oldLine[i].value() !== line[i].value()) {
-							same = false;
+		// Check if the replacement list is valid
+		for (let i = 0, len = repList.length; i < len; ++i) {
+			let currTok = repList[i];
+
+			// __VA_ARGS__ has benn processed
+			if (currTok.value() === '#') {
+				if (isFunc) {
+					let j = i + 1;
+
+					while (repList[j] && repList[j].isWhitespace())
+						++j;
+
+					let nextTok = repList[j];
+
+					if (nextTok === undefined)
+						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the # operator cannot appear at the end of replacement list', currTok.range());
+
+					let isParam = false;
+
+					for (let tok of parameters) {
+						if (nextTok.value() === tok.value()) {
+							isParam = true;
 							break;
 						}
 					}
+
+					if (!isParam)
+						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the # operator shall be followed by a parameter', currTok.range());
 				}
+			} else if (currTok.value() === '##') {
+				if (i === 0)
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the ## operator cannot appear at the beginning of replacement list', currTok.range());
+
+				if (i === len - 1)
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the ## operator cannot appear at the end of replacement list', currTok.range());
 			}
-			if (!same) {
-				if (old === null) {
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'redefining built-in macro', name.range()));
-				} else {
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '\'' + name.value() + '\' macro redefined', name.range()));
-					this._context.emitDiagnostics(
-						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', old.nameToken.range()));
+		}
+
+		// Check if the macro is valid
+		if (name.value() in this._macros) {
+			let prev = this._macros[name.value()];
+
+			if (prev === null)
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `try redefine built-in macro ${name.value()}`, name.range());
+
+			if (prev.isFunctionLike() !== isFunc)
+				return [
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `macro ${name.value()} was defined both object-like and function-like`, name.range()),
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+				];
+
+			if (isFunc) {
+				if (parameters.length !== prev.countOfParam())
+					return [
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `macro ${name.value()} has different number of parameters with previous definition`, name.range()),
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+					];
+
+				for (let i = 0, len = parameters.length; i < len; ++i) {
+					if (parameters[i].value() !== prev.parameter()[i])
+						return [
+							new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'parameter name mismatch', parameters[i].range()),
+							new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+						];
 				}
+
+				if (isVar !== prev.isVariadic())
+					return [
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the variability of macro ${name.value()} conflicts with previous definition`, name.range()),
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+					];
+
+				if (!Macro.repListIsIdentical(repList, prev.repList()))
+					return [
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the replacement list of macro ${name.value()} is not identical to that of previous`, name.range()),
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+					];
+			} else {
+				if (!Macro.repListIsIdentical(repList, prev.repList()))
+					return [
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the replacement list of macro ${name.value()} is not identical to that of previous`, name.range()),
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
+					];
 			}
-		} else {
-			this._macros[name.value()] = {
-				isFunctionLike: false,
+		}
+
+		if (isFunc) {
+			this._macros[name.value()] = new FunctionMacro({
+				context: this._context,
 				nameToken: name,
-				replacementList: line
-			};
+				repList,
+				param: parameters.map(tok => tok.value()),
+				isvar: isVar
+			});
+		} else {
+			this._macros[name.value()] = new ObjectMacro({
+				context: this._context,
+				nameToken: name,
+				repList,
+			});
 		}
 	}
 
@@ -913,7 +975,12 @@ export default class Preprocessor {
 			case 'include':
 				break;
 			case 'define':
-				this._processDefineDirective();
+				let diag = this._processDefineDirective();
+
+				if (diag) {
+					this._context.emitDiagnostics(diag);
+					this._skipLine();
+				}
 				break;
 			case 'undef':
 				this._processUndefDirective();

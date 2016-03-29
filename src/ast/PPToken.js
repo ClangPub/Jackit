@@ -43,4 +43,8 @@ export default class PPToken {
 	value() {
 		return this._value;
 	}
+
+	isWhitespace() {
+		return this.type() === 'whitespace' || this.type() === 'linebreak';
+	}
 }

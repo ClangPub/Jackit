@@ -28,12 +28,17 @@ import PPToken from './PPToken.js';
 
 export default class MacroReplacedPPToken extends PPToken {
 
-	constructor(token, cause) {
+	constructor(token, macro, expansion) {
 		super(token.range(), token.type(), token.value());
-		this._cause = cause;
+		this._macro = macro;
+		this._expansion = expansion;
 	}
 
-	cause() {
-		return this._cause;
+	macro() {
+		return this._macro;
+	}
+
+	expansion() {
+		return this._expansion;
 	}
 }

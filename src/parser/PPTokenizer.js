@@ -59,12 +59,12 @@ export default class PPTokenizer {
 
 	_parseUniversalCharacterName() {
 		let start = this._index;
-		if (this._source.at(this._index++) != '\\') {
+		if (this._source.at(this._index++) !== '\\') {
 			this._index = start;
 			return false;
 		}
 		let c = this._source.at(this._index++);
-		if (c == 'u') {
+		if (c === 'u') {
 			if (this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit()) {
 				return true;
 			} else {
@@ -74,7 +74,7 @@ export default class PPTokenizer {
 				this._index = start;
 				return false;
 			}
-		} else if (c == 'U') {
+		} else if (c === 'U') {
 			if (this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit() && this._parseHexDigit()) {
 				this._index = start;
 				return true;
@@ -113,7 +113,7 @@ export default class PPTokenizer {
 		this._start();
 		let c = this._source.at(this._index);
 		if (!PPTokenizer.isDigit(c)) {
-			if (c == '.' && PPTokenizer.isDigit(this._source.at(this._index + 1))) {
+			if (c === '.' && PPTokenizer.isDigit(this._source.at(this._index + 1))) {
 				this._index++;
 			} else {
 				throw new Error('Unexpected state');
@@ -121,10 +121,10 @@ export default class PPTokenizer {
 		}
 		while (true) {
 			c = this._source.at(++this._index);
-			if (!(c == '.' || c == '\\' && this._parseUniversalCharacterName() || PPTokenizer.isIdentiferPart(c))) {
-				if (c == '+' || c == '-') {
+			if (!(c === '.' || c === '\\' && this._parseUniversalCharacterName() || PPTokenizer.isIdentiferPart(c))) {
+				if (c === '+' || c === '-') {
 					let prev = this._source.at(this._index - 1);
-					if (prev == 'e' || prev == 'E' || prev == 'p' || prev == 'P') {
+					if (prev === 'e' || prev === 'E' || prev === 'p' || prev === 'P') {
 						continue;
 					}
 				}
@@ -157,7 +157,7 @@ export default class PPTokenizer {
 			let c = this._source.at(this._index++);
 			if (c === term) {
 				return true;
-			} else if (c == '\\') {
+			} else if (c === '\\') {
 				let c2 = this._source.at(this._index++);
 				if (c2 === '\n') {
 					this._context.emitDiagnostics(
@@ -223,7 +223,7 @@ export default class PPTokenizer {
 
 	_parseIdentifier() {
 		let c = this._source.at(this._index);
-		if (c == '\\' && this._parseUniversalCharacterName()) {
+		if (c === '\\' && this._parseUniversalCharacterName()) {
 			// Cursor is already moved to next character,
 			// but we will increase it further in the loop
 			// so decrement is needed here
@@ -264,16 +264,16 @@ export default class PPTokenizer {
 				case '/':
 					{
 						c = this._source.at(this._index);
-						if (c == '/') {
+						if (c === '/') {
 							/* Line comment */
 							while (true) {
 								c = this._source.at(++this._index);
-								if (c == '\n' || c == '') {
+								if (c === '\n' || c === '') {
 									builder += ' ';
 									break loop;
 								}
 							}
-						} else if (c == '*') {
+						} else if (c === '*') {
 							/* Block comment */
 							let startOfComment = this._index - 1;
 							++this._index;
@@ -288,12 +288,12 @@ export default class PPTokenizer {
 									--this._index;
 									builder += ' ';
 									break;
-								} else if (c == '*') {
-									if (this._source.at(this._index) == '/') {
+								} else if (c === '*') {
+									if (this._source.at(this._index) === '/') {
 										++this._index;
 										builder += ' ';
 										break;
-									} else if (this._source.at(this._index - 2) == '/') {
+									} else if (this._source.at(this._index - 2) === '/') {
 										// Nested comment, emit a warning
 
 										this._context.emitDiagnostics(
@@ -309,6 +309,7 @@ export default class PPTokenizer {
 							break loop;
 						}
 					}
+					break;
 				default:
 					this._index--;
 					break loop;
@@ -357,6 +358,7 @@ export default class PPTokenizer {
 						return this._buildToken('.');
 					}
 				}
+				break;
 			case '[':
 			case ']':
 			case '(':
@@ -420,6 +422,7 @@ export default class PPTokenizer {
 						--this._index;
 						return this._buildToken('/');
 				}
+				break;
 			case '%':
 				/*
 				 * Deal with %:, %:%:, %> and common % and %=. The first three
@@ -449,6 +452,7 @@ export default class PPTokenizer {
 						--this._index;
 						return this._buildToken('%');
 				}
+				break;
 			case '<':
 				{
 					/*
@@ -457,7 +461,7 @@ export default class PPTokenizer {
 					 * that if < preceeds #include, it will be a header instead a
 					 * punctuator
 					 */
-					if (this._includeStage == 3) {
+					if (this._includeStage === 3) {
 						this._parseHeaderName('>');
 						let token = this._buildToken('header');
 						let value = token.value();
@@ -488,11 +492,13 @@ export default class PPTokenizer {
 							} else {
 								return this._buildToken('<<');
 							}
+							break;
 						default:
 							--this._index;
 							return this._buildToken('<');
 					}
 				}
+				break;
 			case '>':
 				{
 					/* >, >=, >>, >>= */
@@ -550,6 +556,7 @@ export default class PPTokenizer {
 						return this._buildToken('#');
 					}
 				}
+				break;
 			case '0':
 			case '1':
 			case '2':
@@ -596,9 +603,11 @@ export default class PPTokenizer {
 							this._parseString('"');
 							return this._errorRecovery(this._buildToken('string'));
 						}
+						break;
 					default:
 						break;
 				}
+				break;
 			case 'U':
 			case 'L':
 				/* @'c-char-seq' @"s-char-seq", @=U or @=L */
@@ -618,7 +627,7 @@ export default class PPTokenizer {
 		--this._index;
 		if (this._parseIdentifier()) {
 			let token = this._buildTokenOnly('identifier');
-			if (this._includeStage == 2) {
+			if (this._includeStage === 2) {
 				/*
 				 * if the line looks like #include, the next time we encounter <
 				 * or ", we will parse it as header

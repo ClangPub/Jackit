@@ -33,10 +33,14 @@ export default class Context {
 	}
 
 	emitDiagnostics(...msgs) {
-		this._diagnostics.push(...msgs);
-		let fatal = msgs.filter(msg => msg.level() === DiagnosticMessage.LEVEL_FATAL);
-		if (fatal.length !== 0) {
-			throw fatal[0];
+		if (msgs.length === 1 && msgs[0] instanceof Array) {
+			this.emitDiagnostics(...msgs[0]);
+		} else {
+			this._diagnostics.push(...msgs);
+			let fatal = msgs.filter(msg => msg.level() === DiagnosticMessage.LEVEL_FATAL);
+			if (fatal.length !== 0) {
+				throw fatal[0];
+			}
 		}
 	}
 
