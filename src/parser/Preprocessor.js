@@ -140,6 +140,17 @@ function makePPToken(value, nameToken, expansion) {
 		return new MacroReplacedPPToken(pptokens[0], nameToken, expansion);
 }
 
+function expansionRange(expansion) {
+	if (expansion.rparen === undefined) {
+		return expansion.macroTok.range().source().range(
+			expansion.macroTok.range().start(),
+			expansion.rparen.range().end()
+		);
+	} else {
+		return expansion.macroTok.range();
+	}
+}
+
 export default class Preprocessor {
 	constructor(context, pptokens) {
 		this._context = context;
@@ -219,7 +230,7 @@ export default class Preprocessor {
 
 	_processLineDirective() {
 		// Parse rest of line
-		let tokens = this._macroExpand(this._consumeLine());
+		let tokens = this._macroExpand(this._consumeLine(), false);
 		let linebreak = tokens[tokens.length - 1];
 		let lineNumPos = this._firstEffectiveElement(tokens);
 		if (lineNumPos === -1) {
@@ -518,12 +529,27 @@ export default class Preprocessor {
 				isvar
 			};
 		} else {
-			this._macros[name.value()] = {
+			let macro = {
 				isFunc: false,
 				context: this._context,
 				nameToken: name,
-				repList: this._processHashHash(repList),
+				repList: null,
 			};
+
+			// try to process ##
+			try {
+				let preReplace = this._processHashHash(macro, repList, { macroTok: name });
+				macro.repList = preReplace;
+			} catch (ex) {
+				if (ex instanceof Array) {
+					throw [
+						ex[0],
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, `in the definition of ${name.value()}`, name.range())
+					];
+				}
+			}
+
+			this._macros[name.value()] = macro;
 		}
 	}
 
@@ -800,10 +826,10 @@ export default class Preprocessor {
 						let token = makePPToken(prev.value() + next.value(), macro.nameToken, expansion);
 
 						if (token === null) {
-							this._context.emitDiagnostics(
+							throw [
 								new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `operator ## result in a invalid pp-token ${prev.value() + next.value()}`, currTok.range()),
-								new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'in expansion: ', expansion.macroTok.range().source().range(expansion.macroTok.range().start(), expansion.rparen.range().end()))
-							);
+								new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'in expansion: ', expansionRange(expansion))
+							];
 						} else {
 							result.push(token);
 						}
@@ -818,7 +844,7 @@ export default class Preprocessor {
 	}
 
 	_addReplaceMark(tokens, macro, expansion) {
-		return tokens.map(tok => new MacroReplacedPPToken(tok, macro.nameTok, expansion));
+		return tokens.map(tok => new MacroReplacedPPToken(tok, macro.nameToken, expansion));
 	}
 
 	_adjustArg(macro, expansion, commas) {
@@ -857,7 +883,7 @@ export default class Preprocessor {
 		}
 	}
 
-	_funcReplace(macro, expansion) {
+	_funcMacroReplace(macro, expansion) {
 		let replaced = [];
 		let prevHash = '';
 
@@ -918,6 +944,7 @@ export default class Preprocessor {
 
 		loop: while (tokens.length) {
 			let macroNameToken = tokens.shift();
+
 			if (macroNameToken.type() !== 'identifier' || !(macroNameToken.value() in this._macros)) {
 				output.push(macroNameToken);
 				continue;
@@ -954,7 +981,7 @@ export default class Preprocessor {
 			let macro = this._macros[macroName];
 
 			if (!macro.isFunc) {
-				tokens.unshift(this._addReplaceMark(macroNameToken));
+				tokens.unshift(...this._addReplaceMark(macro.repList, macro, { macroTok: macroNameToken }));
 				continue;
 			}
 
@@ -1050,7 +1077,7 @@ export default class Preprocessor {
 
 			let adjustedArg = this._adjustArg(macro, expansion, commas);
 
-			let result = this._funcReplace(macro, {
+			let result = this._funcMacroReplace(macro, {
 				macroTok: macroNameToken,
 				lparen,
 				args: adjustedArg,
