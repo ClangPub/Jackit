@@ -141,7 +141,7 @@ function makePPToken(value, nameToken, expansion) {
 }
 
 function expansionRange(expansion) {
-	if (expansion.rparen === undefined) {
+	if (expansion.rparen !== undefined) {
 		return expansion.macroTok.range().source().range(
 			expansion.macroTok.range().start(),
 			expansion.rparen.range().end()
@@ -542,10 +542,12 @@ export default class Preprocessor {
 				macro.repList = preReplace;
 			} catch (ex) {
 				if (ex instanceof Array) {
-					throw [
+					return [
 						ex[0],
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, `in the definition of ${name.value()}`, name.range())
 					];
+				} else {
+					throw ex;
 				}
 			}
 
