@@ -230,7 +230,7 @@ export default class Preprocessor {
 
 	_processLineDirective() {
 		// Parse rest of line
-		let tokens = this._macroExpand(this._consumeLine(), false);
+		let tokens = this._macroExpand(this._consumeLine());
 		let linebreak = tokens[tokens.length - 1];
 		let lineNumPos = this._firstEffectiveElement(tokens);
 		if (lineNumPos === -1) {
@@ -917,7 +917,7 @@ export default class Preprocessor {
 							replaced.push(...expansion.args[index]);
 						}
 					} else {
-						replaced.push(...this._macroExpand(expansion.args[index], false));
+						replaced.push(...this._macroExpand(expansion.args[index]));
 					}
 				}
 			} else {
@@ -941,7 +941,7 @@ export default class Preprocessor {
 		);
 	}
 
-	_macroExpand(tokens, isFromInput) {
+	_macroExpand(tokens, isFromInput = false) {
 		let output = [];
 
 		loop: while (tokens.length) {
