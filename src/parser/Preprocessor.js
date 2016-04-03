@@ -30,7 +30,96 @@ import TransformedSource from '../source/TransformedSource.js';
 import LineMap from '../source/LineMap.js';
 import MacroReplacedPPToken from '../ast/MacroReplacedPPToken.js';
 import PPToken from '../ast/PPToken.js';
-import { Macro, ObjectMacro, FunctionMacro } from '../ast/Macro.js';
+import Context from '../context/Context.js';
+import PPTokenizer from './PPTokenizer.js';
+
+function repListIsIdentical(lhs, rhs) {
+	if (lhs.length !== rhs.length)
+		return false;
+
+	for (let i = 0, len = lhs.length; i < len; ++i) {
+		let ltok = lhs[i];
+		let rtok = rhs[i];
+
+		if (ltok.type() === 'whitespace') {
+			if (rtok.type() !== 'whitespace')
+				return false;
+		} else {
+			if (rtok.value() !== ltok.value())
+				return false;
+		}
+	}
+
+	return true;
+}
+
+function insertBackSlash(tok) {
+	if (tok.type() === 'character' || tok.type() === 'string') {
+		let result = '';
+
+		for (let ch of tok.value()) {
+			switch (ch) {
+				case '"':
+					result += '\\"';
+					break;
+				/// IMPLDEF insert a backslash before a backslash which
+				/// starts a universal character name or not; choice is true
+				case '\\':
+					result += '\\\\';
+					break;
+				default:
+					result += ch;
+			}
+		}
+	} else {
+		return tok.value();
+	}
+}
+
+function makeHashString(arg) {
+	let deleteWS = [];
+
+	for (let tok of arg) {
+		if (tok.isWhitespace()) {
+			if (deleteWS.length !== 0 && !deleteWS[deleteWS.length - 1].isWhitespace()) {
+				deleteWS.push(tok);
+			}
+		} else {
+			deleteWS.push(tok);
+		}
+	}
+
+	while (deleteWS.length !== 0 && deleteWS[deleteWS.length - 1].isWhitespace()) {
+		deleteWS.pop();
+	}
+
+	return '"' + deleteWS.map(tok => tok.isWhitespace() ? ' ' : insertBackSlash(tok)).join('') + '"';
+}
+
+function countOfPPTok(pptokens) {
+	let result = 0;
+
+	for (let tok of pptokens) {
+		if (!tok.isWhitespace()) {
+			++result;
+		}
+	}
+
+	return result;
+}
+
+function makePPToken(value, nameToken, expansion) {
+	let pseudoCtx = new Context();
+	let pseudoSrc = new Source('', value);
+
+	let pptokens = PPTokenizer.tokenize(pseudoCtx, pseudoSrc);
+
+	// the pptokens contains the additional linebreak and the EOF so that length is 3
+	if (pseudoCtx.diagnostics().length !== 0 || pptokens.length !== 3)
+		return null;
+	else
+		return new MacroReplacedPPToken(pptokens[0], nameToken, expansion);
+}
 
 export default class Preprocessor {
 	constructor(context, pptokens) {
@@ -209,7 +298,7 @@ export default class Preprocessor {
 
 		let parameters = [];
 		let paramListTok = [];
-		let isVar = false;
+		let isvar = false;
 		let rparen;
 
 		if (this._input[0].type() === '(') {
@@ -225,7 +314,7 @@ export default class Preprocessor {
 				case 'identifier':
 				case ',':
 				case '...':
-					// valid pp-token, analyse after
+					// valid pp-token, analyse later
 					break;
 				case ')':
 					rparen = this._consume();
@@ -251,7 +340,7 @@ export default class Preprocessor {
 						if (paramListTok.length !== 1) {
 							return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the ... notation must appear at the end of parameter list', currTok.range());
 						} else {
-							isVar = true;
+							isvar = true;
 						}
 					} else {
 						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'no comma before ellipsis', currTok.range());
@@ -304,14 +393,20 @@ export default class Preprocessor {
 		let repList = [];
 
 		while (this._input[0].type() !== 'linebreak') {
-			if (this._input[0].type() === 'identifier' && this._input[0].value() === '__VA_ARGS__' && !isVar)
-				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot appear in the replacement list of function-like macro without ellipsis notation', this._input[0].range());
+			if (this._input[0].type() === 'identifier' && this._input[0].value() === '__VA_ARGS__') {
+				if (!isFunc) {
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot appear in the replacement list of object-like macro', this._input[0].range());
+				} else if (!isvar) {
+					return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot appear in the replacement list of function-like macro without ellipsis notation', this._input[0].range());
+				}
+			}
+
 
 			repList.push(this._consume());
 		}
 
 		// Trim trailing whitespace
-		if (repList.length && repList[repList.length - 1].type() === 'whitespace') {
+		while (repList.length && repList[repList.length - 1].type() === 'whitespace') {
 			repList.pop();
 		}
 
@@ -319,7 +414,7 @@ export default class Preprocessor {
 		for (let i = 0, len = repList.length; i < len; ++i) {
 			let currTok = repList[i];
 
-			// __VA_ARGS__ has benn processed
+			// __VA_ARGS__ has been processed
 			if (currTok.value() === '#') {
 				if (isFunc) {
 					let j = i + 1;
@@ -332,14 +427,7 @@ export default class Preprocessor {
 					if (nextTok === undefined)
 						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the # operator cannot appear at the end of replacement list', currTok.range());
 
-					let isParam = false;
-
-					for (let tok of parameters) {
-						if (nextTok.value() === tok.value()) {
-							isParam = true;
-							break;
-						}
-					}
+					let isParam = this._paramIndex(parameters.map(p => p.value()), isvar, nextTok.value()) !== -1;
 
 					if (!isParam)
 						return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the # operator shall be followed by a parameter', currTok.range());
@@ -358,9 +446,9 @@ export default class Preprocessor {
 			let prev = this._macros[name.value()];
 
 			if (prev === null)
-				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `try redefine built-in macro ${name.value()}`, name.range());
+				return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `try to redefine built-in macro ${name.value()}`, name.range());
 
-			if (prev.isFunctionLike() !== isFunc)
+			if (prev.isFunc !== isFunc)
 				return [
 					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `macro ${name.value()} was defined both object-like and function-like`, name.range()),
 					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
@@ -381,19 +469,19 @@ export default class Preprocessor {
 						];
 				}
 
-				if (isVar !== prev.isVariadic())
+				if (isvar !== prev.isvariadic())
 					return [
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the variability of macro ${name.value()} conflicts with previous definition`, name.range()),
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
 					];
 
-				if (!Macro.repListIsIdentical(repList, prev.repList()))
+				if (!repListIsIdentical(repList, prev.repList))
 					return [
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the replacement list of macro ${name.value()} is not identical to that of previous`, name.range()),
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
 					];
 			} else {
-				if (!Macro.repListIsIdentical(repList, prev.repList()))
+				if (!repListIsIdentical(repList, prev.repList))
 					return [
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `the replacement list of macro ${name.value()} is not identical to that of previous`, name.range()),
 						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'previous definition is here', prev.nameToken().range())
@@ -402,19 +490,21 @@ export default class Preprocessor {
 		}
 
 		if (isFunc) {
-			this._macros[name.value()] = new FunctionMacro({
+			this._macros[name.value()] = {
+				isFunc: true,
 				context: this._context,
 				nameToken: name,
 				repList,
 				param: parameters.map(tok => tok.value()),
-				isvar: isVar
-			});
+				isvar
+			};
 		} else {
-			this._macros[name.value()] = new ObjectMacro({
+			this._macros[name.value()] = {
+				isFunc: false,
 				context: this._context,
 				nameToken: name,
-				repList,
-			});
+				repList: this._processHashHash(repList),
+			};
 		}
 	}
 
@@ -445,6 +535,7 @@ export default class Preprocessor {
 
 	_processUndefDirective() {
 		let name = this._getMacroNameAndSkipLine('#undef');
+
 		if (name) {
 			delete this._macros[name.value()];
 		}
@@ -482,7 +573,7 @@ export default class Preprocessor {
 			if (this._peekTokenNoWS().type() !== '#') {
 				this.processTextLine();
 			} else {
-				let hashToken = this._readTokenNoWS();
+				this._readTokenNoWS(); // #
 				let directive = this._readTokenNoWS();
 
 				switch (directive.value()) {
@@ -506,7 +597,7 @@ export default class Preprocessor {
 			if (this._peekTokenNoWS().type() !== '#') {
 				this._skipLine();
 			} else {
-				let hashToken = this._readTokenNoWS();
+				this._readTokenNoWS();
 				let directive = this._readTokenNoWS();
 
 				switch (directive.value()) {
@@ -620,13 +711,12 @@ export default class Preprocessor {
 		}
 
 
-		if (!macro.isFunctionLike) {
-			let macroName = token.value();
-			this._input.unshift(...macro.replacementList.map(tok => new MacroReplacedPPToken(tok, token)));
-		} else {
+		if (macro.isFunctionLike()) {
 			this._waitlparen = true;
 			this._output.push(new MacroReplacedPPToken(
 				new PPToken(null, 'macro', null), token));
+		} else {
+			this._input.unshift(...macro.replace(token));
 		}
 	}
 
@@ -695,13 +785,189 @@ export default class Preprocessor {
 	_initialCause(pptoken) {
 		let cause = pptoken;
 		while (cause instanceof MacroReplacedPPToken) {
-			cause = cause.cause();
+			cause = cause.expansion().macroTok;
 		}
 		return cause;
 	}
 
-	_macroExpand(tokens) {
+	_paramIndex(param, isvar, name) {
+		if (name === '__VA_ARGS__')
+			return isvar ? param.length : -1;
+		else
+			return param.indexOf(name);
+	}
+
+	_processHash(macro, tokens, expansion) {
+		let result = [];
+
+		for (let i = 0, len = tokens.length; i < len; ++i) {
+			let currTok = tokens[i];
+
+			if (currTok.value() === '#') {
+				++i;
+
+				while (tokens[i] !== undefined && tokens[i].isWhitespace())
+					++i;
+
+				let index = this._paramIndex(macro.param, macro.isvar, tokens[i].value());
+
+				result.push(new PPToken(
+					currTok.range().source().range(currTok.range().start(), tokens[i].range().end()),
+					'string', makeHashString(expansion.args[index])
+				));
+			} else {
+				result.push(currTok);
+			}
+		}
+
+		return result;
+	}
+
+	// UNSPECIFIED the evaluation order of ##; the choice is left-to-right
+	_processHashHash(macro, tokens, expansion) {
+		let result = [];
+
+		for (let i = 0, len = tokens.length; i < len; ++i) {
+			let currTok = tokens[i];
+
+			if (currTok.value() === '##') {
+				let prev;
+
+				do
+					prev = result.pop();
+				while (prev.isWhitespace());
+
+				let next;
+
+				do
+					next = tokens[++i];
+				while (next.isWhitespace());
+
+				if (prev.type() === 'placemarker') {
+					result.push(next);
+				} else {
+					if (next.type() === 'placemarker') {
+						result.push(prev);
+					} else {
+						let token = makePPToken(prev.value() + next.value(), macro.nameToken, expansion);
+
+						if (token === null) {
+							this._context.emitDiagnostics(
+								new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `operator ## result in a invalid pp-token ${prev.value() + next.value()}`, currTok.range()),
+								new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'in expansion: ', expansion.macroTok.range().source().range(expansion.macroTok.range().start(), expansion.rparen.range().end()))
+							);
+						} else {
+							result.push(token);
+						}
+					}
+				}
+			} else {
+				result.push(currTok);
+			}
+		}
+
+		return result;
+	}
+
+	_addReplaceMark(tokens, macro, expansion) {
+		return tokens.map(tok => new MacroReplacedPPToken(tok, macro.nameTok, expansion));
+	}
+
+	_adjustArg(macro, expansion, commas) {
+		if (macro.isvar) {
+			if (expansion.args.length <= macro.param.length) {
+				throw [
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the number pf arguments shall more than the number of parameters in a function-like macro with ellipsis notation', expansion.rparen.range()),
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'macro definition is here', macro.nameToken.range()),
+				];
+			} else {
+				let length = macro.param.length;
+				let args   = expansion.args;
+
+				let restArg = args.slice(length);
+				let restComma = commas.slice(length);
+
+				let varArg = [];
+
+				for (let arg of restArg) {
+					varArg.push(...arg);
+
+					if (restComma.length !== 0)
+						varArg.push(restComma.shift());
+				}
+
+				return args.slice(0, length).concat([varArg]);
+			}
+		} else {
+			if (expansion.args.length !== macro.param.length)
+				throw [
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the number pf arguments shall equal to the number of parameters in a function-like macro with ellipsis notation', expansion.rparen.range()),
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'macro definition is here', macro.nameToken.range()),
+				];
+			else
+				return expansion.args;
+		}
+	}
+
+	_funcReplace(macro, expansion) {
+		let replaced = [];
+		let prevHash = '';
+
+		for (let i = 0, len = macro.repList.length; i < len; ++i) {
+			let currTok = macro.repList[i];
+			let index = this._paramIndex(macro.param, macro.isvar, currTok.value());
+
+			if (currTok.type() === 'identifier' && index !== -1) {
+				if (prevHash === '#') {
+					replaced.push(currTok);
+				} else if (prevHash === '##') {
+					if (countOfPPTok(expansion.args[index]) === 0) {
+						replaced.push(new PPToken(currTok.range(), 'placemarker', ''));
+					} else {
+						replaced.push(...expansion.args[index]);
+					}
+				} else {
+					let j = i + 1;
+
+					while (macro.repList[j] !== undefined && macro.repList[j].isWhitespace())
+						++j;
+
+					let next = macro.repList[j];
+
+					if (next !== undefined && next.value() === '##') {
+						if (countOfPPTok(expansion.args[index]) === 0) {
+							replaced.push(new PPToken(currTok.range(), 'placemarker', ''));
+						} else {
+							replaced.push(...expansion.args[index]);
+						}
+					} else {
+						replaced.push(...this._macroExpand(expansion.args[index], false));
+					}
+				}
+			} else {
+				// non-parameter
+
+				if (currTok.value() === '#' || currTok.value() === '##') {
+					prevHash = currTok.value();
+				} else if (!currTok.isWhitespace()) {
+					prevHash = '';
+				}
+
+				replaced.push(currTok);
+			}
+		}
+
+		// UNSPECIFIED the order of evaluation of # and ##; the choice is # first
+		return this._addReplaceMark(
+			this._processHashHash(
+				macro, this._processHash(macro, replaced, expansion).filter(tok => tok.type() !== 'placemarker'), expansion
+			), macro, expansion
+		);
+	}
+
+	_macroExpand(tokens, isFromInput) {
 		let output = [];
+
 		loop: while (tokens.length) {
 			let macroNameToken = tokens.shift();
 			if (macroNameToken.type() !== 'identifier' || !(macroNameToken.value() in this._macros)) {
@@ -710,24 +976,27 @@ export default class Preprocessor {
 			}
 
 			let macroName = macroNameToken.value();
+
 			if (macroName === '__FILE__') {
 				tokens.unshift(
 					new MacroReplacedPPToken(
-						new PPToken(macroNameToken.range(), 'string', this._escapeString(this._initialCause(macroNameToken).range().source().filename())), macroNameToken));
+						new PPToken(macroNameToken.range(), 'string', this._escapeString(this._initialCause(macroNameToken).range().source().filename())),
+						null, macroNameToken));
 				continue;
 			} else if (macroName === '__LINE__') {
 				let range = this._initialCause(macroNameToken).range().resolve();
 				tokens.unshift(
 					new MacroReplacedPPToken(
 						new PPToken(macroNameToken.range(), 'number',
-							range.source().linemap().getLineNumber(range.start()) + 1 + ''), macroNameToken));
+							range.source().linemap().getLineNumber(range.start()) + 1 + ''), null, macroNameToken));
 				continue;
 			}
 
 			// Check eligibility to replace
 			let cause = macroNameToken;
+
 			while (cause instanceof MacroReplacedPPToken) {
-				cause = cause.cause();
+				cause = cause.expansion().macroTok;
 				if (cause.value() === macroName) {
 					output.push(macroNameToken);
 					continue loop;
@@ -735,158 +1004,118 @@ export default class Preprocessor {
 			}
 
 			let macro = this._macros[macroName];
-			if (!macro.isFunctionLike) {
-				tokens.unshift(...macro.replacementList.map(tok => new MacroReplacedPPToken(tok, macroNameToken)));
+
+			if (!macro.isFunc) {
+				tokens.unshift(this._addReplaceMark(macroNameToken));
 				continue;
 			}
 
 			// Check if the macro is actually invoked
 			let lparenPos = -1;
+
 			for (let i = 0; i < tokens.length; i++) {
 				let t = tokens[i];
 				if (t.type() === '(') {
 					lparenPos = i;
 					break;
-				}
-				if (t.type() !== 'whitespace' && t.type() !== 'linebreak') {
+				} else if (!t.isWhitespace()) {
 					break;
 				}
 			}
+
 			if (lparenPos === -1) {
 				output.push(macroNameToken);
 				continue;
 			}
 
-			// let debugBeforeExpansion = '';
-			// for (let t of output) {
-			// 	debugBeforeExpansion += t.value();
-			// }
-			// debugBeforeExpansion += macroName;
-			// for (let t of tokens) {
-			// 	debugBeforeExpansion += t.value();
-			// }
+			let lparen = tokens[lparenPos];
 
 			// Drop left parenthesis
 			tokens.splice(0, lparenPos + 1);
 
 			let argList = [];
-			let delimiters = [];
+			let commas = [];
+			let rparen;
+			let temp = [];
 
-			let lparen = 0;
-			for (let i = 0; i < tokens.length; i++) {
-				let tok = tokens[i];
-				if (lparen === 0) {
-					if (tok.type() === ',' || tok.type() === ')') {
-						argList.push(tokens.splice(0, i));
-						delimiters.push(tok);
-						tokens.splice(0, 1);
-						i = -1; // Start from 0 again
+			let parens = 0;
+
+			while (true) {
+				let currTok = tokens.shift();
+
+				if (currTok === undefined && isFromInput)
+					currTok = this._input.shift();
+
+				// Assuming next won't be undefined or null
+				if (currTok.type() === 'eof') {
+					// EOF only can be read from this._input
+					this._input.unshift(currTok);
+
+					let lastTok;
+
+					if (argList.length === 0) {
+						lastTok = lparen;
+					} else {
+						let lastArg = argList[argList.length - 1];
+						lastTok = lastArg[lastArg.length - 1];
 					}
-					if (tok.type() === ')') {
+
+					throw [
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'missing right parenthesis of macro invocation', lastTok.range()),
+						new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'invocation starts here:', macroNameToken.range())
+					];
+				}
+
+				if (currTok.value() === '(') {
+					++parens;
+					temp.push(currTok);
+				} else if (currTok.value() === ')') {
+					if (parens === 0) {
+						argList.push(temp);
+						rparen = currTok;
 						break;
+					} else {
+						--parens;
+						temp.push(currTok);
 					}
-				}
-				if (tok.type() === '(') {
-					lparen++;
-				} else if (tok.type() === ')') {
-					lparen--;
-				}
-			}
-
-			let result = [];
-			loop2: for (let token of macro.replacementList) {
-				if (token.type() === 'identifier') {
-					for (let i = 0; i < macro.parameters.length; i++) {
-						if (macro.parameters[i].value() === token.value()) {
-							let lastTokIndex = this._lastEffectiveElement(result);
-							if (lastTokIndex >= 0 && result[lastTokIndex].type() === '#') {
-								// Stringify
-								let str = '';
-								let range = null;
-								for (let t of argList[i]) {
-									str += t.value();
-									if (range) {
-										range = this._rangeConcat(range, t.range());
-									} else {
-										range = t.range();
-									}
-								}
-								result.splice(lastTokIndex);
-								result.push(new PPToken(range, 'string', this._escapeString(str)));
-								continue loop2;
-							} else {
-								let replaceArg = this._macroExpand(argList[i].slice());
-								this._stripSpaceAndLine(replaceArg);
-								if (replaceArg.length === 0) {
-									result.push(null);
-								}
-								// Replace with argument
-								for (let t of replaceArg) {
-									result.push(t);
-								}
-								continue loop2;
-							}
-						}
+				} else if (currTok.value() === ',') {
+					if (parens === 0) {
+						argList.push(temp);
+						commas.push(currTok);
+						temp = [];
+					} else {
+						temp.push(currTok);
 					}
-				}
-
-				result.push(new MacroReplacedPPToken(token, macroNameToken));
-			}
-
-			for (let i = 1; i < result.length - 1; i++) {
-				if (result[i] && result[i].type() === '##') {
-					let prevIndex = i - 1;
-					while (result[prevIndex] && (result[prevIndex].type() === 'whitespace' || result[prevIndex].type() === 'linebreak')) {
-						prevIndex--;
-					}
-
-					let nextIndex = i + 1;
-					while (result[nextIndex] && (result[nextIndex].type() === 'whitespace' || result[nextIndex].type() === 'linebreak')) {
-						nextIndex++;
-					}
-					let prev = result[prevIndex];
-					let next = result[nextIndex];
-					let concat;
-					if (prev && next) {
-						// TODO, deal appropriately
-						concat = new PPToken(prev.range(), prev.type(), prev.value() + next.value());
-					} else if (prev) {
-						concat = prev;
-					} else if (next) {
-						concat = next;
-					}
-					result.splice(prevIndex, nextIndex - prevIndex + 1, concat);
-					i = prevIndex;
+				} else {
+					temp.push(currTok);
 				}
 			}
 
-			for (let i = 0; i < result.length; i++) {
-				if (!result[i]) {
-					result.splice(i, 1);
-					i--;
-				}
-			}
+			let expansion = {
+				macroTok: macroNameToken,
+				lparen,
+				args: argList,
+				rparen
+			};
+
+			// TODO Check preprocessing directive appear in argument list
+
+			let adjustedArg = this._adjustArg(macro, expansion, commas);
+
+			let result = this._funcReplace(macro, {
+				macroTok: macroNameToken,
+				lparen,
+				args: adjustedArg,
+				rparen
+			});
 
 			tokens.unshift(...result);
-
-			// let debugAfterExpansion = '';
-			// for (let t of output) {
-			// 	debugAfterExpansion += t.value();
-			// }
-			// for (let t of tokens) {
-			// 	debugAfterExpansion += t.value();
-			// }
-
-			// console.log('Before Expansion:');
-			// console.log(debugBeforeExpansion);
-			// console.log('After  Expansion:');
-			// console.log(debugAfterExpansion);
 		}
 
 		return output;
 	}
 
-	_processMacroFinsihArgList() {
+	_processMacroFinishArgList() {
 		let i, tok;
 		for (i = this._output.length - 2; i >= 0; i--) {
 			tok = this._output[i];
@@ -898,53 +1127,25 @@ export default class Preprocessor {
 			throw new Error('Internal Error');
 		}
 		let args = this._output.splice(i, this._output.length - i + 1);
-		args[0] = args[0].cause();
+		args[0] = args[0].expansion().macroTok;
 
 		this._input.unshift(...this._macroExpand(args));
 	}
 
 	processTextLine() {
-		while (true) {
-			let token = this._input.shift();
-			if (token.type() === 'linebreak') {
-				this._output.push(token);
-				break;
-			}
-			if (token.type() === 'whitespace') {
-				this._output.push(token);
-				continue;
-			}
-			if (this._waitlparen) {
-				if (token.type() !== '(') {
-					this._waitlparen = false;
-					this._processMacroNoArgList();
-				} else {
-					// Start macro replacement
-					this._waitlparen = false;
-					this._paren++;
-					this._output.push(token);
-					continue;
-				}
-			}
-			if (this._paren !== 0) {
-				if (token.type() === '(') {
-					this._paren++;
-					this._output.push(token);
-				} else if (token.type() === ')') {
-					this._paren--;
-					this._output.push(token);
-					if (this._paren === 0) {
-						this._processMacroFinsihArgList();
-					}
-				} else {
-					this._output.push(token);
-				}
-				continue;
-			}
-			if (token.type() === 'identifier' && token.value() in this._macros) {
-				this._processMacro(token);
+		let pptokens = [];
+
+		while (this._input[0].type() !== 'linebreak') {
+			pptokens.push(this._input.shift());
+		}
+
+		try {
+			this._output = this._output.concat(this._macroExpand(pptokens, true));
+		} catch (ex) {
+			if (ex instanceof DiagnosticMessage || ex instanceof Array) {
+				this._context.emitDiagnostics(ex);
 			} else {
-				this._output.push(token);
+				throw ex;
 			}
 		}
 	}
@@ -979,8 +1180,9 @@ export default class Preprocessor {
 
 				if (diag) {
 					this._context.emitDiagnostics(diag);
-					this._skipLine();
 				}
+
+				this._skipLine();
 				break;
 			case 'undef':
 				this._processUndefDirective();
@@ -1013,10 +1215,17 @@ export default class Preprocessor {
 		}
 
 		if (this._peekTokenNoWS().type() !== '#') {
-			this.processTextLine();
+			while (this._input[0] && this._input[0].type() !== 'linebreak' && this._input[0].type() !== 'eof')
+				this.processTextLine();
+
+			if (this._input[0].type() === 'linebreak')
+				this._output.push(this._input.shift());
+
 			return true;
 		} else {
-			let hashToken = this._readTokenNoWS();
+			// read the #
+			this._readTokenNoWS();
+
 			let directive = this._readTokenNoWS();
 
 			this._processDirective(directive);
