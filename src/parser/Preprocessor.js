@@ -53,6 +53,23 @@ function repListIsIdentical(lhs, rhs) {
 	return true;
 }
 
+function escapeString(string) {
+	let ret = '"';
+	for (let i = 0; i < string.length; i++) {
+		if (string[i] === '"') {
+			ret += '\\"';
+		} else if (string[i] === '\\') {
+			ret += '\\\\';
+		} else if (string[i] === '\n') {
+			ret += '\\\n';
+		} else {
+			ret += string[i];
+		}
+	}
+	ret += '"';
+	return ret;
+}
+
 function insertBackSlash(tok) {
 	if (tok.type() === 'character' || tok.type() === 'string') {
 		let result = '';
@@ -63,7 +80,7 @@ function insertBackSlash(tok) {
 					result += '\\"';
 					break;
 				/// IMPLDEF insert a backslash before a backslash which
-				/// starts a universal character name or not; choice is true
+				/// starts a universal character name or not; the choice is true
 				case '\\':
 					result += '\\\\';
 					break;
@@ -71,6 +88,8 @@ function insertBackSlash(tok) {
 					result += ch;
 			}
 		}
+
+		return result;
 	} else {
 		return tok.value();
 	}
@@ -680,60 +699,6 @@ export default class Preprocessor {
 		}
 	}
 
-	_processMacro(token) {
-		let macroName = token.value();
-
-		if (macroName === '__FILE__') {
-			this._input.unshift(
-				new MacroReplacedPPToken(
-					new PPToken(token.range(), 'string', this._escapeString(this._initialCause(token).range().source().filename())), token));
-			return;
-		} else if (macroName === '__LINE__') {
-			let range = this._initialCause(token).range().resolve();
-			this._input.unshift(
-				new MacroReplacedPPToken(
-					new PPToken(token.range(), 'number',
-						range.source().linemap().getLineNumber(range.start()) + 1 + ''), token));
-			return;
-		}
-
-		let macro = this._macros[macroName];
-
-		// Check eligibility to replace
-		let cause = token;
-		while (cause instanceof MacroReplacedPPToken) {
-			cause = cause.cause();
-			if (cause.value() === token.value()) {
-				// Previous expanded, abort
-				this._output.push(token);
-				return;
-			}
-		}
-
-
-		if (macro.isFunctionLike()) {
-			this._waitlparen = true;
-			this._output.push(new MacroReplacedPPToken(
-				new PPToken(null, 'macro', null), token));
-		} else {
-			this._input.unshift(...macro.replace(token));
-		}
-	}
-
-	_processMacroNoArgList() {
-		let i, tok;
-		for (i = this._output.length - 2; i >= 0; i--) {
-			tok = this._output[i];
-			if (tok.type() === 'macro') {
-				break;
-			}
-		}
-		if (i < 0) {
-			throw new Error('Internal Error');
-		}
-		this._output[i] = tok.cause();
-	}
-
 	_stripSpaceAndLine(tokens) {
 		while (tokens.length && (tokens[0].type() === 'whitespace' || tokens[0].type() === 'linebreak')) {
 			tokens.shift();
@@ -756,23 +721,6 @@ export default class Preprocessor {
 			index++;
 		}
 		return index === tokens.length ? -1 : index;
-	}
-
-	_escapeString(string) {
-		let ret = '"';
-		for (let i = 0; i < string.length; i++) {
-			if (string[i] === '"') {
-				ret += '\\"';
-			} else if (string[i] === '\\') {
-				ret += '\\\\';
-			} else if (string[i] === '\n') {
-				ret += '\\\n';
-			} else {
-				ret += string[i];
-			}
-		}
-		ret += '"';
-		return ret;
 	}
 
 	_rangeConcat(a, b) {
@@ -980,7 +928,7 @@ export default class Preprocessor {
 			if (macroName === '__FILE__') {
 				tokens.unshift(
 					new MacroReplacedPPToken(
-						new PPToken(macroNameToken.range(), 'string', this._escapeString(this._initialCause(macroNameToken).range().source().filename())),
+						new PPToken(macroNameToken.range(), 'string', escapeString(this._initialCause(macroNameToken).range().source().filename())),
 						null, macroNameToken));
 				continue;
 			} else if (macroName === '__LINE__') {
@@ -1113,23 +1061,6 @@ export default class Preprocessor {
 		}
 
 		return output;
-	}
-
-	_processMacroFinishArgList() {
-		let i, tok;
-		for (i = this._output.length - 2; i >= 0; i--) {
-			tok = this._output[i];
-			if (tok.type() === 'macro') {
-				break;
-			}
-		}
-		if (i < 0) {
-			throw new Error('Internal Error');
-		}
-		let args = this._output.splice(i, this._output.length - i + 1);
-		args[0] = args[0].expansion().macroTok;
-
-		this._input.unshift(...this._macroExpand(args));
 	}
 
 	processTextLine() {
