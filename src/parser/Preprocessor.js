@@ -70,6 +70,16 @@ function escapeString(string) {
 	return ret;
 }
 
+// function stripSpaceAndLine(tokens) {
+// 	while (tokens.length && (tokens[0].type() === 'whitespace' || tokens[0].type() === 'linebreak')) {
+// 		tokens.shift();
+// 	}
+// 	while (tokens.length && (tokens[tokens.length - 1].type() === 'whitespace' || tokens[tokens.length - 1].type() === 'linebreak')) {
+// 		tokens.pop();
+// 	}
+// 	return tokens;
+// }
+
 function insertBackSlash(tok) {
 	if (tok.type() === 'character' || tok.type() === 'string') {
 		let result = '';
@@ -160,6 +170,11 @@ export default class Preprocessor {
 		this._macros = Object.create(null);
 		this._macros['__FILE__'] = null;
 		this._macros['__LINE__'] = null;
+		this._macros['__DATE__'] = null;
+		this._macros['__TIME__'] = null;
+		this._macros['__STDC__'] = null;
+		this._macros['__STDC_HOSTED__'] = null;
+		this._macros['__STDC_VERSION__'] = null;
 		this._paren = 0;
 		this._waitlparen = false;
 	}
@@ -323,6 +338,9 @@ export default class Preprocessor {
 
 		if (name.value() === '__VA_ARGS__')
 			return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, '__VA_ARGS__ cannot be used as a macro name', name.range());
+
+		if (name.value() === 'defined')
+			return new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'defined cannot be used as a macro name', name.range());
 
 		let isFunc;
 
@@ -584,7 +602,17 @@ export default class Preprocessor {
 		let name = this._getMacroNameAndSkipLine('#undef');
 
 		if (name) {
-			delete this._macros[name.value()];
+			if (name.value() === 'defined')  {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `try to undef operator defined`, name.range())
+				);
+			} else if (this._macros[name.value()] === null) {
+				this._context.emitDiagnostics(
+					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, `try to undef built-in macro ${name.value()}`, name.range())
+				);
+			} else {
+				delete this._macros[name.value()];
+			}
 		}
 	}
 
@@ -727,16 +755,6 @@ export default class Preprocessor {
 		}
 	}
 
-	_stripSpaceAndLine(tokens) {
-		while (tokens.length && (tokens[0].type() === 'whitespace' || tokens[0].type() === 'linebreak')) {
-			tokens.shift();
-		}
-		while (tokens.length && (tokens[tokens.length - 1].type() === 'whitespace' || tokens[tokens.length - 1].type() === 'linebreak')) {
-			tokens.pop();
-		}
-		return tokens;
-	}
-
 	_lastEffectiveElement(tokens, index = tokens.length - 1) {
 		while (index >= 0 && (tokens[index].type() === 'whitespace' || tokens[index].type() === 'linebreak')) {
 			index--;
@@ -764,6 +782,46 @@ export default class Preprocessor {
 			cause = cause.expansion().macroTok;
 		}
 		return cause;
+	}
+
+	// TODO macro in 6.10.8.1 are all implemented; those in 6.10.8.2 are not.
+	_builtInMacro(name, token) {
+		let now = new Date();
+
+		switch (name) {
+			case '__LINE__':
+				let range = this._initialCause(token).range().resolve();
+				return new PPToken(token.range(), 'number',
+							range.source().linemap().getLineNumber(range.start()) + 1 + '');
+			case '__FILE__':
+				return new PPToken(token.range(), 'string', escapeString(this._initialCause(token).range().source().filename()));
+			case '__DATE__':
+				const monthStr = [
+					'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+				];
+
+				return new PPToken(
+					token.range(), 'string',
+					'"' + monthStr[now.getMonth()] + ' ' +
+					(now.getDate() < 10 ? ' ' : '') + now.getDate() + ' ' +
+					now.getFullYear() + '"'
+				);
+			case '__TIME__':
+				return new PPToken(
+					token.range(), 'string',
+					'"' +
+					(now.getHours() < 10 ? '0' : '') + now.getHours() + ':' +
+					(now.getMinutes() < 10 ? '0' : '') + now.getMinutes() + ':' +
+					(now.getSeconds() < 10 ? '0' : '') + now.getSeconds() + '"'
+				);
+			case '__STDC__':
+				// TODO check if the implementation is conforming
+				return new PPToken(token.range(), 'number', '1');
+			case '__STDC_HOSTED__':
+				return new PPToken(token.range(), 'number', '1');
+			case '__STDC_VERSION__':
+				return new PPToken(token.range(), 'number', '201112L');
+		}
 	}
 
 	_paramIndex(param, isvar, name) {
@@ -954,18 +1012,10 @@ export default class Preprocessor {
 
 			let macroName = macroNameToken.value();
 
-			if (macroName === '__FILE__') {
+			if (this._macros[macroName] === null) {
 				tokens.unshift(
-					new MacroReplacedPPToken(
-						new PPToken(macroNameToken.range(), 'string', escapeString(this._initialCause(macroNameToken).range().source().filename())),
-						null, macroNameToken));
-				continue;
-			} else if (macroName === '__LINE__') {
-				let range = this._initialCause(macroNameToken).range().resolve();
-				tokens.unshift(
-					new MacroReplacedPPToken(
-						new PPToken(macroNameToken.range(), 'number',
-							range.source().linemap().getLineNumber(range.start()) + 1 + ''), null, macroNameToken));
+					new MacroReplacedPPToken(this._builtInMacro(macroName, macroNameToken), null, macroNameToken)
+				);
 				continue;
 			}
 
