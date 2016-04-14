@@ -858,6 +858,7 @@ export default class Preprocessor {
 	}
 
 	// UNSPECIFIED the evaluation order of ##; the choice is left-to-right
+	// UNDEFINED a universal character name is produced by token concatenation; DO NOT check
 	_processHashHash(macro, tokens, expansion) {
 		let result = [];
 
