@@ -934,13 +934,19 @@ export default class Preprocessor {
 				return args.slice(0, length).concat([varArg]);
 			}
 		} else {
-			if (expansion.args.length !== macro.param.length)
-				throw [
-					new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the number pf arguments shall equal to the number of parameters in a function-like macro with ellipsis notation', expansion.rparen.range()),
-					new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'macro definition is here', macro.nameToken.range()),
-				];
-			else
-				return expansion.args;
+			if (macro.param.length === 0) {
+				if (expansion.args.length === 1 && expansion.args[0].length === 0) {
+					return [];
+				}
+			} else {
+				if (expansion.args.length === macro.param.length) {
+					return expansion.args;
+				}
+			}
+			throw [
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'the number pf arguments shall equal to the number of parameters in a function-like macro', expansion.rparen.range()),
+				new DiagnosticMessage(DiagnosticMessage.LEVEL_NOTE, 'macro definition is here', macro.nameToken.range()),
+			];
 		}
 	}
 
