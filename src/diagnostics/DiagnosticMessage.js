@@ -72,7 +72,7 @@ function colorLine(line, startOffset, endOffset, color) {
 function generateIndicator(line, startOffset, endOffset, caretLine, caretOffset, color) {
 	if (line !== caretLine) {
 		return repeat(' ', startOffset) + Color.wrap(repeat('~', endOffset - startOffset), color);
-	}else{
+	} else {
 		return repeat(' ', startOffset) + Color.wrap(repeat('~', caretOffset - startOffset) + '^' + repeat('~', endOffset - caretOffset - 1), color);
 	}
 }
@@ -89,7 +89,6 @@ function padLeft(n, l) {
 export default class DiagnosticMessage extends Error {
 	constructor(level, message, range) {
 		super(message);
-
 		this._range = range.resolve();
 		this._level = level;
 	}
@@ -126,7 +125,7 @@ export default class DiagnosticMessage extends Error {
 		let [startLine, startOffset] = getLineAndOffset(linemap, this._range.start());
 		let [endLine, endOffset] = getLineAndOffset(linemap, this._range.end() - 1);
 		endOffset++; // Edge case when end of line shall also be marked
-		let [caretLine, caretOffset] = this._range.caret() === -1 ? [-1,-1] : getLineAndOffset(linemap, this._range.caret());
+		let [caretLine, caretOffset] = this._range.caret() === -1 ? [-1, -1] : getLineAndOffset(linemap, this._range.caret());
 
 		if (startLine === endLine) {
 			let lineText = translateLine(linemap.getLine(startLine));

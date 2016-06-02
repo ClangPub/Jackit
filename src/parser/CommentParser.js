@@ -81,6 +81,13 @@ export default class CommentParser {
 				let startOfComment = i;
 
 				for (i += 2; i < content.length - 1; i++) {
+					if (content[i] === '/' && content[i + 1] === '*') {
+						// emit a warning for nested comment
+						context.emitDiagnostics(
+							new DiagnosticMessage(DiagnosticMessage.LEVEL_WARNING, '\'/*\' within block comment',
+								source.range(i, i + 2)));
+					}
+
 					if (content[i] === '*' && content[i + 1] === '/') {
 						break;
 					}
@@ -96,6 +103,9 @@ export default class CommentParser {
 				builder += ' ';
 				startIndex = i += 2;
 				mapping.addMapping(builder.length, startIndex);
+
+				// Counter i++ in next iteration
+				i--;
 				continue;
 			}
 		}

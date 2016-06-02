@@ -39,6 +39,10 @@ export default class IndexMap {
 		if (from < this._fromIndexes[this._fromIndexes.length - 1]) {
 			throw new Error('Precondition not satisified: addMapping must be called in increasing order');
 		}
+		if (from === this._fromIndexes[this._fromIndexes.length - 1]) {
+			this._fromIndexes.pop();
+			this._toIndexes.pop();
+		}
 		this._fromIndexes.push(from);
 		this._toIndexes.push(to);
 	}
@@ -56,6 +60,7 @@ export default class IndexMap {
 				break;
 			}
 		}
+		this._lastQuery = from;
 		this._lastIndex = fromIndex;
 		return this._toIndexes[fromIndex] + from - this._fromIndexes[fromIndex];
 	}

@@ -261,55 +261,6 @@ export default class PPTokenizer {
 					 */
 					builder += c;
 					break;
-				case '/':
-					{
-						c = this._source.at(this._index);
-						if (c === '/') {
-							/* Line comment */
-							while (true) {
-								c = this._source.at(++this._index);
-								if (c === '\n' || c === '') {
-									builder += ' ';
-									break loop;
-								}
-							}
-						} else if (c === '*') {
-							/* Block comment */
-							let startOfComment = this._index - 1;
-							++this._index;
-							while (true) {
-								c = this._source.at(this._index++);
-								if (c === '') {
-									this._context.emitDiagnostics(
-										new DiagnosticMessage(DiagnosticMessage.LEVEL_ERROR, 'unterminated /* comment',
-											this._source.range(startOfComment, startOfComment + 2)));
-									// Remove back cursor, so next read is the same EOF
-									// Basic error recovery, treat as if it is terminated
-									--this._index;
-									builder += ' ';
-									break;
-								} else if (c === '*') {
-									if (this._source.at(this._index) === '/') {
-										++this._index;
-										builder += ' ';
-										break;
-									} else if (this._source.at(this._index - 2) === '/') {
-										// Nested comment, emit a warning
-
-										this._context.emitDiagnostics(
-											new DiagnosticMessage(DiagnosticMessage.LEVEL_WARNING, '\'/*\' within block comment',
-												this._source.range(this._index - 2, this._index)));
-									}
-								}
-							}
-							break;
-						} else {
-							// Just division
-							--this._index;
-							break loop;
-						}
-					}
-					break;
 				default:
 					this._index--;
 					break loop;
@@ -391,6 +342,7 @@ export default class PPTokenizer {
 					return this._buildToken(c);
 				}
 			case '*':
+			case '/':
 			case '~':
 			case '!':
 			case '^':
@@ -409,20 +361,6 @@ export default class PPTokenizer {
 					}
 					return this._buildToken(c);
 				}
-			case '/':
-				/* Since / also starts comment, we specialize here */
-				switch (src.at(this._index++)) {
-					case '/':
-					case '*':
-						this._index -= 2;
-						return this._parseWhitespace();
-					case '=':
-						return this._buildToken('/=');
-					default:
-						--this._index;
-						return this._buildToken('/');
-				}
-				break;
 			case '%':
 				/*
 				 * Deal with %:, %:%:, %> and common % and %=. The first three
